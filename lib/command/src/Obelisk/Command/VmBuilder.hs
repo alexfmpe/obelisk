@@ -21,8 +21,8 @@ import System.FilePath ((</>), (<.>))
 import qualified System.Info
 import System.Process (proc)
 
-import Obelisk.App (MonadObelisk, getObeliskUserStateDir)
-import Obelisk.CliApp (Severity (..), callProcessAndLogOutput, failWith, readProcessAndLogStderr,
+import Obelisk.App (getObeliskUserStateDir)
+import Obelisk.CliApp (MonadObelisk, Severity (..), callProcessAndLogOutput, failWith, readProcessAndLogStderr,
                        withExitFailMessage, withSpinner)
 
 -- | Generate the `--builders` argument string to enable the VM builder after ensuring it is available.

@@ -12,6 +12,11 @@ module Obelisk.CliApp
   , CliConfig
   , HasCliConfig
   , getCliConfig
+  , HasObelisk
+  , getObelisk
+  , MonadObelisk
+  , Obelisk(..)
+  , ObeliskT(..)
 
   -- .Spinner
   , withSpinner

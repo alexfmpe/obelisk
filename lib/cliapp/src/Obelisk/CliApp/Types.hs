@@ -3,12 +3,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE StandaloneDeriving #-}
 module Obelisk.CliApp.Types where
 
 import Control.Concurrent.MVar (MVar)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.Log (LoggingT, MonadLog, Severity (..), WithSeverity (..))
 import Control.Monad.Reader (MonadIO, ReaderT (..), ask)
+import Control.Monad.Trans.Class (lift)
 import Data.IORef (IORef)
 import Data.Text (Text)
 
@@ -45,5 +47,35 @@ newtype CliT m a = CliT
 class Monad m => HasCliConfig m where
   getCliConfig :: m CliConfig
 
+instance HasCliConfig m => HasCliConfig (ReaderT Obelisk m) where
+  getCliConfig = lift getCliConfig
+
 instance Monad m => HasCliConfig (CliT m) where
   getCliConfig = CliT ask
+
+
+newtype Obelisk = Obelisk
+  { _obelisk_cliConfig :: CliConfig
+  }
+
+newtype ObeliskT m a = ObeliskT
+  { unObeliskT :: ReaderT Obelisk (CliT m) a
+  }
+  deriving
+    ( Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask
+    , HasObelisk, HasCliConfig)
+
+deriving instance Monad m => Cli (ObeliskT m)
+
+class HasObelisk m where
+  getObelisk :: m Obelisk
+
+instance Monad m => HasObelisk (ReaderT Obelisk m) where
+  getObelisk = ask
+
+type MonadObelisk m =
+  ( Cli m
+  , HasCliConfig m
+  , HasObelisk m
+  , MonadMask m
+  )

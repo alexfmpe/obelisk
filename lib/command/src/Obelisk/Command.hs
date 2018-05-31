@@ -28,7 +28,7 @@ import System.IO (hIsTerminalDevice, stdout)
 import System.Posix.Process (executeFile)
 
 import Obelisk.App
-import Obelisk.CliApp (Severity (..), failWith, getLogLevel, newCliConfig, putLog)
+import Obelisk.CliApp (MonadObelisk, Obelisk(..), ObeliskT(..), HasObelisk(..), Severity (..), failWith, getLogLevel, newCliConfig, putLog)
 import Obelisk.CliApp.Demo (cliDemo)
 import Obelisk.Command.Deploy
 import Obelisk.Command.Project

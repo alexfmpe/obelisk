@@ -32,8 +32,7 @@ import System.Process (CreateProcess, cwd, proc, waitForProcess)
 import GitHub.Data.GitData (Branch)
 import GitHub.Data.Name (Name)
 
-import Obelisk.App (MonadObelisk)
-import Obelisk.CliApp (Severity (..), callProcessAndLogOutput, createProcess_, failWith, putLog, withSpinner)
+import Obelisk.CliApp (MonadObelisk, Severity (..), callProcessAndLogOutput, createProcess_, failWith, putLog, withSpinner)
 import Obelisk.Command.Thunk
 import Obelisk.Command.Utils (cp)
 --TODO: Make this module resilient to random exceptions

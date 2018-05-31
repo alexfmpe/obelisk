@@ -71,8 +71,7 @@ import System.IO.Temp
 import System.Posix (getSymbolicLinkStatus, modificationTime)
 import System.Process (proc)
 
-import Obelisk.App (MonadObelisk)
-import Obelisk.CliApp (Severity (..), callProcessAndLogOutput, failWith, putLog, readProcessAndLogStderr,
+import Obelisk.CliApp (MonadObelisk, Severity (..), callProcessAndLogOutput, failWith, putLog, readProcessAndLogStderr,
                        withExitFailMessage, withSpinner)
 import Obelisk.Command.Utils (checkGitCleanStatus, cp, git, procWithPackages)
 

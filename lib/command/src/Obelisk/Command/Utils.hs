@@ -7,8 +7,7 @@ import Data.Semigroup ((<>))
 import qualified Data.Text as T
 import qualified System.Process as P
 
-import Obelisk.App (MonadObelisk)
-import Obelisk.CliApp (Severity (..), callProcessAndLogOutput, readProcessAndLogStderr)
+import Obelisk.CliApp (MonadObelisk, Severity (..), callProcessAndLogOutput, readProcessAndLogStderr)
 
 -- Check whether the working directory is clean
 checkGitCleanStatus :: MonadObelisk m => FilePath -> m Bool

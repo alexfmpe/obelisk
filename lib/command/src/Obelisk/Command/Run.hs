@@ -26,8 +26,7 @@ import System.Directory
 import System.FilePath
 import System.IO.Temp (withSystemTempDirectory)
 
-import Obelisk.App (MonadObelisk, ObeliskT)
-import Obelisk.CliApp (CliT (..), HasCliConfig, Severity (..), callCommand, failWith, getCliConfig, putLog,
+import Obelisk.CliApp (CliT (..), HasCliConfig, MonadObelisk, ObeliskT, Severity (..), callCommand, failWith, getCliConfig, putLog,
                        runCli)
 import Obelisk.Command.Project (inProjectShell)
 
