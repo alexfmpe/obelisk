@@ -60,7 +60,7 @@ run = do
       readProcessAndLogStderr Debug $
         proc "nix" ["eval", "-f", root, "passthru.staticFilesImpure", "--raw"]
     putLog Debug $ "Assets impurely loaded from: " <> assets
-    runGhcid dotGhciPath $ Just $ unwords
+    runGhcid dotGhciPath True $ Just $ unwords
       [ "run"
       , show freePort
       , "(runServeAsset " ++ show assets ++ ")"
@@ -77,7 +77,7 @@ runRepl = do
 runWatch :: MonadObelisk m => m ()
 runWatch = do
   pkgs <- getLocalPkgs
-  withGhciScript pkgs $ \dotGhciPath -> runGhcid dotGhciPath Nothing
+  withGhciScript pkgs $ \dotGhciPath -> runGhcid dotGhciPath False Nothing
 
 -- | Relative paths to local packages of an obelisk project
 -- TODO a way to query this
@@ -181,17 +181,31 @@ runGhciRepl dotGhci = inProjectShell "ghc" $ unwords $ "ghci" : ["-no-user-packa
 runGhcid
   :: MonadObelisk m
   => FilePath -- ^ Path to .ghci
+  -> Bool -- ^ Generate code
   -> Maybe String -- ^ Optional command to run at every reload
   -> m ()
-runGhcid dotGhci mcmd = callCommand $ unwords $ "ghcid" : opts
+runGhcid dotGhci generateCode mcmd = callCommand $ unwords $ "ghcid" : opts
   where
     opts =
       [ "-W"
-      --TODO: The decision of whether to use -fwarn-redundant-constraints should probably be made by the user
-      , "--command='ghci -Wall -ignore-dot-ghci -fwarn-redundant-constraints -no-user-package-db -ghci-script " <> dotGhci <> "' "
+      , ghci
       , "--reload=config"
       , "--outputfile=ghcid-output.txt"
       ] <> testCmd
+    --TODO: The decision of whether to use -fwarn-redundant-constraints should probably be made by the user
+    ghci = intercalate " " $
+      [ "--command='ghci"
+      , "-Wall"
+      , "-ignore-dot-ghci"
+      , "-fwarn-redundant-constraints"
+      ]
+      <> (if generateCode then [] else ["-fno-code"]) <>
+      [ "-no-user-package-db"
+      , "-ghci-script"
+      , dotGhci
+      , "'"
+      ]
+
     testCmd = maybeToList (flip fmap mcmd $ \cmd -> "--test='" <> cmd <> "'")
 
 getFreePort :: MonadIO m => m PortNumber
