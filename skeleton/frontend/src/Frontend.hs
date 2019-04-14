@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -9,10 +10,12 @@ module Frontend where
 
 import Control.Applicative
 import Control.Arrow
+import Control.Lens (FunctorWithIndex(..))
 import Control.Monad.Fix
 import Data.Align
 import Data.Functor.Alt
 import Data.Functor.Bind
+import Data.List.NonEmpty
 import Data.These
 
 import qualified Data.Text as T
@@ -46,7 +49,8 @@ frontend = Frontend
       renderW "join" $ join $ ww clk 5 0
   }
 
-
+tshow :: Show a => a -> T.Text
+tshow = T.pack . show
 
 wn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m Int
 wn ev n i = Workflow $ do
@@ -63,7 +67,10 @@ br = el "br" blank
 
 renderW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Show a) => T.Text -> Workflow t m a -> m ()
 renderW lbl w = do
-  text lbl >> workflow w >>= display >> br
+  text lbl
+  ipayload <- workflow $ imap (,) w
+  dynText $ ffor ipayload $ \(k, p) -> "[" <> tshow k <> "] " <> tshow p
+  br
 
 instance Monad m => Apply (RoutedT t r m) where
   (<.>) = (<*>)
@@ -75,6 +82,15 @@ ffor2' a b f = liftF2 f a b
 
 deriving instance (Functor m, Reflex t) => Functor (Workflow t m)
 
+zipNEListWithWorkflow :: (Monad m, Reflex t) => NonEmpty k -> Workflow t m a -> Workflow t m (k, a)
+zipNEListWithWorkflow (k :| ks) w = Workflow $ do
+  (a0, wEv) <- unWorkflow w
+  pure ((k, a0), case nonEmpty ks of
+           Nothing -> never
+           Just nel -> zipNEListWithWorkflow nel <$> wEv)
+
+instance (Monad m, Reflex t) => FunctorWithIndex Int (Workflow t m) where
+  imap f w = uncurry f <$> zipNEListWithWorkflow (0 :| [1..]) w
 
 instance (Apply m, Reflex t) => Apply (Workflow t m) where
   liftF2 f = parallelWorkflows f f f
