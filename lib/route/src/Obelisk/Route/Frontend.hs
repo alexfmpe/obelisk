@@ -21,6 +21,7 @@
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
@@ -73,7 +74,9 @@ import Data.Monoid
 import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.These
 import Data.Functor.Compose
+import Generics.SOP (Code, Generic)
 import Reflex.Class
 import Reflex.Host.Class
 import Reflex.PostBuild.Class
@@ -525,3 +528,138 @@ pathToHash = ('#' :) . fromMaybe "" . L.stripPrefix "/"
 #else
 setAdaptedUriPath s u = u { uriPath = s }
 #endif
+
+
+
+
+
+
+instance Generic (These a b)
+
+
+{- From https://github.com/reflex-frp/reflex/pull/106 -}
+
+type family FunctorWrapTypeList (f :: * -> *) (xs :: [*]) :: [*] where
+  FunctorWrapTypeList f '[] = '[]
+  FunctorWrapTypeList f (x ': xs) = f x ': FunctorWrapTypeList f xs
+
+type family FunctorWrapTypeListOfLists (f :: * -> *) (xss :: [[*]]) :: [[*]] where
+  FunctorWrapTypeListOfLists f '[] = '[]
+  FunctorWrapTypeListOfLists f (xs ': xsTail) = FunctorWrapTypeList f xs ': FunctorWrapTypeListOfLists f xsTail
+
+type WrapsDyn t a' a = (Generic a', Generic a, Code a' ~ FunctorWrapTypeListOfLists (Dynamic t) (Code a))
+
+factorDynGeneric
+  :: forall t m a a'.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a)
+  => Dynamic t a -> m (Dynamic t a')
+factorDynGeneric = undefined
+
+
+{- route combinators -}
+
+genericRouted :: (Reflex t, MonadFix m, MonadHold t m, WrapsDyn t r' r) => RoutedT t r' m a -> RoutedT t r m a
+genericRouted r = RoutedT $ ReaderT $ runRoutedT r <=< factorDynGeneric
+
+genericRoute
+  :: (MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r)
+  => (r' -> m a)
+  -> RoutedT t r m (Dynamic t a)
+genericRoute = genericRouted . strictDynWidget
+
+maybeRoute' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
+maybeRoute' n j = genericRoute $ maybe n (runRoutedT j)
+
+eitherRoute'
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => RoutedT t x m a
+  -> RoutedT t y m a
+  -> RoutedT t (Either x y) m (Dynamic t a)
+eitherRoute' x y = genericRoute $ either (runRoutedT x) (runRoutedT y)
+
+theseRoute'
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => RoutedT t x m a
+  -> RoutedT t y m a
+  -> RoutedT t (x,y) m a
+  -> RoutedT t (These x y) m (Dynamic t a)
+theseRoute' x y z = genericRoute $ these (runRoutedT x) (runRoutedT y) (\x y -> runRoutedT z $ zipDyn x y)
+
+
+{- dyn combinators -}
+
+dynGeneric_
+  :: forall t m a b.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t b a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => Dynamic t a
+  -> (b -> m ())
+  -> m ()
+dynGeneric_ dma k = void $ dynGeneric dma k
+
+dynGeneric
+  :: forall t m a a' b.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => Dynamic t a
+  -> (a' -> m b)
+  -> m (Event t b)
+dynGeneric dma k = dyn . fmap k =<< factorDynGeneric dma
+
+
+dynMaybe
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m z
+  -> (Dynamic t a -> m z)
+  -> Dynamic t (Maybe a)
+  -> m (Event t z)
+dynMaybe nothing' just' d = dynGeneric d $ maybe nothing' just'
+
+dynMaybe_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m ()
+  -> (Dynamic t a -> m ())
+  -> Dynamic t (Maybe a)
+  -> m ()
+dynMaybe_ nothing' just' d = dynGeneric_ d $ maybe nothing' just'
+
+
+dynEither
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m z)
+  -> (Dynamic t b -> m z)
+  -> Dynamic t (Either a b)
+  -> m (Event t z)
+dynEither left' right' d = dynGeneric d $ either left' right'
+
+dynEither_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m ())
+  -> (Dynamic t b -> m ())
+  -> Dynamic t (Either a b)
+  -> m ()
+dynEither_ left' right' d = dynGeneric_ d $ either left' right'
+
+
+dynThese
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m z)
+  -> (Dynamic t b -> m z)
+  -> (Dynamic t a -> Dynamic t b -> m z)
+  -> Dynamic t (These a b)
+  -> m (Event t z)
+dynThese this' that' these' d = dynGeneric d $ these this' that' these'
+
+
+dynRequest_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m ()
+  -> (Dynamic t e -> m ())
+  -> m ()
+  -> (Dynamic t a -> m ())
+  -> Dynamic t (Maybe (Either e (Maybe a)))
+  -> m ()
+dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success

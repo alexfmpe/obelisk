@@ -14,6 +14,7 @@ library
                  dependent-sum-universe-orphans,
                  dependent-sum-template,
                  either,
+                 generics-sop,
                  ghcjs-dom,
                  http-types,
                  jsaddle,
@@ -27,6 +28,7 @@ library
                  reflex-dom-core,
                  template-haskell,
                  text,
+                 these,
                  transformers,
                  universe,
                  universe-template
