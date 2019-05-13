@@ -74,9 +74,11 @@ import Data.Dependent.Sum (DSum (..))
 import Data.GADT.Compare
 import Data.Monoid
 import Data.Proxy
+import qualified Data.Some as Some
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.These
+import Data.Universe
 import Data.Functor.Compose
 import Generics.SOP (Code, Generic)
 import Reflex.Class
@@ -666,22 +668,25 @@ dynRequest_
   -> m ()
 dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
 
-class Representable' prod sum where
-  tabulate' :: (forall x. sum x -> x) -> prod
-  index' :: prod -> (forall x. sum x -> x)
+class Representable' prod where
+  type Rep' prod :: * -> *
+  tabulate' :: (forall x. Rep' prod x -> x) -> prod
+  index' :: prod -> (forall x. Rep' prod x -> x)
 
-data Record a b = Record
+data Record a b c = Record
   { _a :: a
   , _b :: b
-  , _c :: Int
+  , _c :: c
   }
 
-data RecordTag a b k where
-  RecordTag_A :: RecordTag a b a
-  RecordTag_B :: RecordTag a b b
-  RecordTag_C :: RecordTag a b Int
+data RecordTag a b c k where
+  RecordTag_A :: RecordTag a b c a
+  RecordTag_B :: RecordTag a b c b
+  RecordTag_C :: RecordTag a b c c
 
-instance Representable' (Record a b) (RecordTag a b) where
+instance Representable' (Record a b c) where
+  type Rep' (Record a b c) = RecordTag a b c
+
   tabulate' f = Record
     { _a = f RecordTag_A
     , _b = f RecordTag_B
@@ -693,5 +698,55 @@ instance Representable' (Record a b) (RecordTag a b) where
     RecordTag_B -> _b r
     RecordTag_C -> _c r
 
---liftR2' :: Representable' (p a) s => p a -> p (a,a)
---liftR2' tabulate
+fmapRep' :: forall a b. (Representable' a, Representable' b)
+--         => ((forall x. Rep' a x -> x -> Rep' b x -> x))
+         => ((forall x. (Rep' a x -> x)) -> (forall x. (Rep' b x -> x)))
+         -> a
+         -> b
+fmapRep' f a = tabulate' $ f $ index' a
+
+{-
+instance Universe (Some.Some (RecordTag a b c)) where
+  universe = [Some.This RecordTag_A, Some.This RecordTag_B, Some.This RecordTag_C]
+-}
+
+wrap :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap w r = r & fmapRep' (\proj tag -> id (proj tag))
+--nothings :: Record a b c f -> Record a b c Maybe
+--fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
+--fmap' nt r = fmapRep' (\proj tag -> proj tag) r
+
+{-
+dup :: Record a b -> Record (a,a) (b,b)
+dup r = fmapRep' (\f t -> case t of
+                     RecordTag_A -> (f t, f t)
+                     RecordTag_B -> (f t, f t)
+                     RecordTag_C -> (f t, f t)
+                 ) r
+-}
+
+--fmapRep' :: Record a b -> Record ) => (forall x. Rep' f x -> Rep' g x) -> f -> g
+--fmapRep' f p = do
+
+
+--instance (Representable' (f a), Representable' (f b), Representable' (f a) ~ Representable' (f b)) => Representable' (f (a,b)) where
+--  type Rep' (f (a,b)) = Rep' (f a)
+--  index'
+{-
+zipRep' :: (Representable' (f a), Representable' (f b), Representable' (f (a,b))
+           , Rep' (f a) ~ Rep' (f b)
+           , Rep' (f a) ~ Rep' (f (a,b))
+           )
+        => (f a) -> (f b) -> (f (a,b))
+zipRep' a b = tabulate' $ \k -> _ --(index' a k, index' b k)
+-}
+{-
+liftR2' :: Representable' (p a) => p a -> p (a,a)
+liftR2' p = tabulate' $ \k -> index' p k
+
+liftR2' :: Representable' (p a) => p a -> p (a,a)
+liftR2' p = tabulate' $ \k -> index' p k
+
+liftR2' :: Representable' (p a) => p a -> p (a,a)
+liftR2' p = tabulate' $ \k -> index' p k
+-}
