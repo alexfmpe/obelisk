@@ -7,9 +7,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+--{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
@@ -663,3 +665,33 @@ dynRequest_
   -> Dynamic t (Maybe (Either e (Maybe a)))
   -> m ()
 dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
+
+class Representable' prod sum where
+  tabulate' :: (forall x. sum x -> x) -> prod
+  index' :: prod -> (forall x. sum x -> x)
+
+data Record a b = Record
+  { _a :: a
+  , _b :: b
+  , _c :: Int
+  }
+
+data RecordTag a b k where
+  RecordTag_A :: RecordTag a b a
+  RecordTag_B :: RecordTag a b b
+  RecordTag_C :: RecordTag a b Int
+
+instance Representable' (Record a b) (RecordTag a b) where
+  tabulate' f = Record
+    { _a = f RecordTag_A
+    , _b = f RecordTag_B
+    , _c = f RecordTag_C
+    }
+
+  index' r = \case
+    RecordTag_A -> _a r
+    RecordTag_B -> _b r
+    RecordTag_C -> _c r
+
+--liftR2' :: Representable' (p a) s => p a -> p (a,a)
+--liftR2' tabulate
