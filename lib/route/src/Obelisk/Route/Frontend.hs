@@ -11,10 +11,11 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
---{-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
@@ -62,7 +63,7 @@ import Obelisk.Route
 
 import Control.Category (Category (..), (.))
 import Control.Category.Cartesian
-import Control.Lens hiding (Bifunctor, bimap, universe, element)
+import Control.Lens hiding (Bifunctor, bimap, index, universe, element)
 import Control.Monad ((<=<))
 import Control.Monad.Fix
 import Control.Monad.Primitive
@@ -74,12 +75,14 @@ import Data.Dependent.Sum (DSum (..))
 import Data.GADT.Compare
 import Data.Monoid
 import Data.Proxy
+import Data.Functor.Rep
 import qualified Data.Some as Some
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.These
 import Data.Universe
 import Data.Functor.Compose
+import GHC.TypeNats
 import Generics.SOP (Code, Generic)
 import Reflex.Class
 import Reflex.Host.Class
@@ -92,7 +95,7 @@ import Reflex.Dynamic
 import Reflex.Dom.Builder.Class
 import Data.Type.Coercion
 import Language.Javascript.JSaddle --TODO: Get rid of this - other platforms can also be routed
-import Reflex.Dom.Core
+import Reflex.Dom.Core hiding (wrap)
 import qualified GHCJS.DOM.Types as DOM
 import Network.URI
 #if defined(ios_HOST_OS)
@@ -668,10 +671,30 @@ dynRequest_
   -> m ()
 dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class Representable' prod where
-  type Rep' prod :: * -> *
-  tabulate' :: (forall x. Rep' prod x -> x) -> prod
-  index' :: prod -> (forall x. Rep' prod x -> x)
+  type Rep' prod :: Nat -> *
+  tabulate' :: (forall n. Rep' prod k -> F prod n) -> prod
+  index' :: prod -> (forall n. Rep' prod n -> F prod n)
+
+type family F p (k :: Nat) where
+  F (Record a b c) 0 = a
+  F (Record a b c) 1 = b
+  F (Record a b c) 2 = c
 
 data Record a b c = Record
   { _a :: a
@@ -679,10 +702,10 @@ data Record a b c = Record
   , _c :: c
   }
 
-data RecordTag a b c k where
-  RecordTag_A :: RecordTag a b c a
-  RecordTag_B :: RecordTag a b c b
-  RecordTag_C :: RecordTag a b c c
+data RecordTag a b c (n :: Nat) where
+  RecordTag_A :: RecordTag a b c 0
+  RecordTag_B :: RecordTag a b c 1
+  RecordTag_C :: RecordTag a b c 2
 
 instance Representable' (Record a b c) where
   type Rep' (Record a b c) = RecordTag a b c
@@ -698,23 +721,79 @@ instance Representable' (Record a b c) where
     RecordTag_B -> _b r
     RecordTag_C -> _c r
 
-fmapRep' :: forall a b. (Representable' a, Representable' b)
---         => ((forall x. Rep' a x -> x -> Rep' b x -> x))
-         => ((forall x. (Rep' a x -> x)) -> (forall x. (Rep' b x -> x)))
+notCoerce :: RecordTag a b c n -> RecordTag a' b' c' n
+notCoerce = \case
+  RecordTag_A -> RecordTag_A
+  RecordTag_B -> RecordTag_B
+  RecordTag_C -> RecordTag_C
+
+wrap :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap w r = tabulate' $ \case
+  RecordTag_A -> w $ index' r RecordTag_A
+  RecordTag_B -> w $ index' r RecordTag_B
+  RecordTag_C -> w $ index' r RecordTag_C
+
+nothings = wrap (const Nothing)
+justs = wrap Just
+
+{-
+wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap' w r = tabulate' $ \t -> w $ index' r (notCoerce t)
+
+    • Couldn't match type ‘F prod n0’ with ‘F prod n’
+      Expected type: Rep' prod k -> F prod n
+        Actual type: Rep' prod k -> F prod n0
+      NB: ‘F’ is a non-injective type family
+      The type variable ‘n0’ is ambiguous
+-}
+
+fmap' :: (forall k. F (Record a b c) k -> F (Record a' b' c') k) -> Record a b c -> Record a' b' c'
+fmap' f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
+
+{-
+    • Couldn't match type ‘F (Record (f a) (f b) (f c)) k0’
+                     with ‘F (Record (f a) (f b) (f c)) k’
+      Expected type: F (Record a b c) k -> F (Record (f a) (f b) (f c)) k
+        Actual type: F (Record a b c) k0
+                     -> F (Record (f a) (f b) (f c)) k0
+      NB: ‘F’ is a non-injective type family
+-}
+--nothings = fmap' (const Nothing)
+--justs = fmap' Just
+
+--(\proj tag -> id (proj tag))
+--nothings :: Record a b c f -> Record a b c Maybe
+--fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
+--fmap' nt r = fmapRep' (\proj tag -> proj tag) r
+
+{-
+fmapRep' :: forall a b. (Representable' a, Representable' b, Coercible (Rep' a) (Rep' b))
+--         => ((forall x. Rep' a x -> x -> x))
+         => ((forall k. (Rep' a k -> F prod k)) -> (forall x. (Rep' b x -> x)))
          -> a
          -> b
 fmapRep' f a = tabulate' $ f $ index' a
+-}
+{-
+--Universe (Some.Some f)
+sequence' :: (Representable f, _) => f (g a) -> g (f a)
+sequence' fg = do
+  let frep = index fg
+      un = fmap (\v -> fmap (v,) (frep v)) universe
+      wut = sequence un :: Int
 
+  undefined
+-}
+
+--liftR2' :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c c')
+--liftR2 :: asdf dsa asdf dsa asdf dsa asdf fdsa asdf fdsa asdf dsa
 {-
 instance Universe (Some.Some (RecordTag a b c)) where
   universe = [Some.This RecordTag_A, Some.This RecordTag_B, Some.This RecordTag_C]
 -}
-
-wrap :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap w r = r & fmapRep' (\proj tag -> id (proj tag))
---nothings :: Record a b c f -> Record a b c Maybe
---fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
---fmap' nt r = fmapRep' (\proj tag -> proj tag) r
 
 {-
 dup :: Record a b -> Record (a,a) (b,b)
