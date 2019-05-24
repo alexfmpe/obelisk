@@ -75,12 +75,12 @@ import Data.Dependent.Sum (DSum (..))
 import Data.GADT.Compare
 import Data.Monoid
 import Data.Proxy
-import Data.Functor.Rep
-import qualified Data.Some as Some
+--import Data.Functor.Rep
+--import qualified Data.Some as Some
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.These
-import Data.Universe
+--import Data.Universe
 import Data.Functor.Compose
 import GHC.TypeNats
 import Generics.SOP (Code, Generic)
@@ -688,7 +688,7 @@ dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ fai
 
 class Representable' prod where
   type Rep' prod :: Nat -> *
-  tabulate' :: (forall n. Rep' prod k -> F prod n) -> prod
+  tabulate' :: (forall n. Rep' prod n -> F prod n) -> prod
   index' :: prod -> (forall n. Rep' prod n -> F prod n)
 
 type family F p (k :: Nat) where
@@ -700,6 +700,12 @@ data Record a b c = Record
   { _a :: a
   , _b :: b
   , _c :: c
+  }
+
+data Record' x y z f = Record'
+  { _x :: f x
+  , _y :: f y
+  , _z :: f z
   }
 
 data RecordTag a b c (n :: Nat) where
@@ -728,30 +734,76 @@ notCoerce = \case
   RecordTag_C -> RecordTag_C
 
 wrap :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap w r = tabulate' $ \case
-  RecordTag_A -> w $ index' r RecordTag_A
-  RecordTag_B -> w $ index' r RecordTag_B
-  RecordTag_C -> w $ index' r RecordTag_C
+wrap f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
 
 nothings = wrap (const Nothing)
 justs = wrap Just
 
+wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap' f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
+
+zip :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c, c')
+zip a b = tabulate' $ \case
+  RecordTag_A -> (index' a RecordTag_A, index' b RecordTag_A)
+  RecordTag_B -> (index' a RecordTag_B, index' b RecordTag_B)
+  RecordTag_C -> (index' a RecordTag_C, index' b RecordTag_C)
+
+type family Lol x k where
+  Lol x 0 = ()
+  Lol x 1 = x
+  Lol x 2 = (x,x)
+
+--lol :: RecordTag a b c n -> RecordTag
+--lol = wrap $ \case
+--  RecordTag_A -> undefined
+
+fmap' :: (forall k. (forall x y z. RecordTag x y z k) -> F (Record a b c) k -> F (Record a' b' c') k)
+      -> Record a b c
+      -> Record a' b' c'
+fmap' f r = tabulate' $ \case
+  RecordTag_A -> f RecordTag_A $ index' r RecordTag_A
+  RecordTag_B -> f RecordTag_B $ index' r RecordTag_B
+  RecordTag_C -> f RecordTag_C $ index' r RecordTag_C
+
+wrap'' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap'' f r = fmap' (\_ x -> f x) r
+
+{-
+hoist :: (forall n. (F (Record a b c) n ~ f) => f -> F (Record a' b' c') n) -> Record a b c -> Record a' b' c'
+hoist f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
+-}
+{-
+hoist :: (forall n. (F (Record a b c) n ~ f) => f -> F (Record a' b' c') n) -> Record a b c -> Record a' b' c'
+hoist f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
+-}
 {-
 wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap' w r = tabulate' $ \t -> w $ index' r (notCoerce t)
-
+wrap' f r = tabulate' $ \t ->
+  let
+    wtf :: f (F (Record a b c) n)--Double
+    wtf = f $ index' r (notCoerce t)
+    lol = wtf
+  in lol
+-}
+{-
     • Couldn't match type ‘F prod n0’ with ‘F prod n’
       Expected type: Rep' prod k -> F prod n
         Actual type: Rep' prod k -> F prod n0
       NB: ‘F’ is a non-injective type family
       The type variable ‘n0’ is ambiguous
 -}
-
-fmap' :: (forall k. F (Record a b c) k -> F (Record a' b' c') k) -> Record a b c -> Record a' b' c'
-fmap' f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
 
 {-
     • Couldn't match type ‘F (Record (f a) (f b) (f c)) k0’
