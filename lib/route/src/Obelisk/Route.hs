@@ -89,6 +89,7 @@ module Obelisk.Route
 
 import Prelude hiding ((.), id)
 
+import Algebra.Lattice
 import Control.Applicative
 import Control.Category (Category (..))
 import qualified Control.Categorical.Functor as Cat
@@ -111,6 +112,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe
 import Data.Monoid ((<>))
+import Data.MonoTraversable
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Some (Some)
@@ -120,6 +122,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding
 import Data.Universe
+import qualified Kleene as K
+import qualified Kleene.ERE as ERE
+import Kleene.Internal.Pretty (Pretty(..))
 import Network.HTTP.Types.URI
 import qualified Numeric.Lens
 import Obelisk.Route.TH
@@ -880,3 +885,65 @@ pathSegmentEncoder = unsafeMkEncoder EncoderImpl
   }
 
 --TODO: decodeURIComponent as appropriate
+
+
+{- Regexp based encoders -}
+newtype Encoder' check parser decoded encoded =
+  Encoder' { unEncoder' :: check (EncoderImpl' parser decoded encoded) }
+
+data EncoderImpl' parse decoded encoded = EncoderImpl'
+  { _encoderImpl'_decode :: !(parse encoded decoded)
+  , _encoderImpl'_encode :: !(decoded -> encoded)
+  }
+
+data RegexpParser encoded decoded where
+  RegexpParser :: MonoFoldable e => K.ERE (Element e) -> (e -> Either Text d) -> RegexpParser e d
+
+unsafeMkEncoder' :: Applicative check => EncoderImpl' parser decoded encoded -> Encoder' check parser decoded encoded
+unsafeMkEncoder' impl = Encoder' (pure impl)
+
+-- Immediatelly inline the regexp test into the decoding function
+-- Keep the regexp parser around only for overlap tests
+-- Maybe make this a `RegexpParser` invariant instead via smart constructors?
+unsafeMkRegexpEncoder
+  :: ( Applicative check
+     , sym ~ Element e, Ord sym, Enum sym)
+  => RegexpParser e d -> (d -> e) -> Encoder' check RegexpParser d e
+unsafeMkRegexpEncoder (RegexpParser regex dec) enc = unsafeMkEncoder' $ EncoderImpl' (RegexpParser regex dec') enc
+  where dec' e =
+          if K.match regex (otoList e)
+          then dec e
+          else Left "encoding not recognized"
+
+unsafeShowEncoder :: (Show a, Read a, Applicative check) => ERE.ERE Char -> Encoder' check RegexpParser a Text
+unsafeShowEncoder regex = unsafeMkRegexpEncoder (RegexpParser regex readEither) (T.pack . show)
+  where readEither = maybe (Left "encoding not recognized") Right . (readMaybe . T.unpack)
+
+unsafeAlphabetEncoder :: (Show a, Read a, Applicative check) => Set Char -> Encoder' check RegexpParser a Text
+unsafeAlphabetEncoder = unsafeShowEncoder . ERE.unions . fmap ERE.char . toList
+
+unsafeNaturalEncoder :: Applicative check => Encoder' check RegexpParser Int Text
+unsafeNaturalEncoder = unsafeShowEncoder $ ERE.charRange '0' '9'
+
+eitherRegexpEncoder
+  :: ( MonadError Text check
+     , sym ~ Element c
+     , Ord sym, Enum sym, Bounded sym, Pretty (ERE.ERE sym)
+     )
+  => Encoder' check RegexpParser a c
+  -> Encoder' check RegexpParser b c
+  -> Encoder' check RegexpParser (Either a b) c
+eitherRegexpEncoder f g = Encoder' $ do
+  EncoderImpl' (RegexpParser pf decf) encf <- unEncoder' f
+  EncoderImpl' (RegexpParser pg decg) encg <- unEncoder' g
+  let overlap = pf /\ pg
+
+  unless (ERE.equivalent K.empty overlap) $
+    throwError $ "parallelRegexpEncoder: overlap detected: " <> T.pack (pretty overlap)
+
+  pure $ EncoderImpl'
+    { _encoderImpl'_encode = either encf encg
+    , _encoderImpl'_decode = RegexpParser
+          (pf \/ pg)
+          (\c -> (Left <$> decf c) `catchError` \_ -> Right <$> decg c)
+    }
