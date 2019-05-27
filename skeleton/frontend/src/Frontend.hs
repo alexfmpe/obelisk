@@ -37,6 +37,9 @@ newtype Step t m a b = Step (a -> m (Event t b)) deriving Functor
 mkStep :: MonadHold t m => (a -> m (Event t b)) -> Step t m a b
 mkStep a2b = Step $ headE <=< a2b
 
+dup :: a -> (a,a)
+dup a = (a,a)
+
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Category (Step t m) where
   id = arr id
 
@@ -53,3 +56,7 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Arrow (Step t m) wher
 
 instance (Reflex t, MonadHold t m) => Profunctor (Step t m) where
   dimap f g (Step a2b) = fmap g $ mkStep (a2b . f)
+
+instance (Functor m, Reflex t, Arrow (Step t m)) => Applicative (Step t m a) where
+  pure = arr . const
+  liftA2 f a2b a2c = fmap (uncurry f) $ a2b &&& a2c
