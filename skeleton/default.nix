@@ -8,9 +8,22 @@ with import ./.obelisk/impl {
   # Uncomment and set this to `true` to indicate your acceptance:
   # config.android_sdk.accept_license = false;
 };
-project ./. ({ ... }: {
+project ./. ({ pkgs, hackGet, ... }: with pkgs.haskell.lib;
+let
+  repos = {
+    reflex = hackGet dep/reflex;
+  };
+
+  overrideSrcs = {
+    inherit (repos) reflex;
+  };
+in {
   android.applicationId = "systems.obsidian.obelisk.examples.minimal";
   android.displayName = "Obelisk Minimal Example";
   ios.bundleIdentifier = "systems.obsidian.obelisk.examples.minimal";
   ios.bundleName = "Obelisk Minimal Example";
+
+  overrides = pkgs.lib.foldr pkgs.lib.composeExtensions  (_: _: {}) [
+    (self: super: pkgs.lib.mapAttrs (name: path: self.callCabal2nix name path {}) overrideSrcs)
+  ];
 })

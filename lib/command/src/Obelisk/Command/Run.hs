@@ -97,7 +97,7 @@ runWatch = do
 -- | Relative paths to local packages of an obelisk project
 -- TODO a way to query this
 getLocalPkgs :: Applicative f => f [FilePath]
-getLocalPkgs = pure ["backend", "common", "frontend"]
+getLocalPkgs = pure ["backend", "common", "frontend", "dep/reflex"]
 
 parseCabalPackage
   :: (MonadObelisk m)
