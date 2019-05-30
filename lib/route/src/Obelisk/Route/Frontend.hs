@@ -75,12 +75,12 @@ import Data.Dependent.Sum (DSum (..))
 import Data.GADT.Compare
 import Data.Monoid
 import Data.Proxy
---import Data.Functor.Rep
---import qualified Data.Some as Some
+import Data.Functor.Rep
+import qualified Data.Some as Some
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.These
---import Data.Universe
+import Data.Universe
 import Data.Functor.Compose
 import GHC.TypeNats
 import Generics.SOP (Code, Generic)
@@ -701,12 +701,9 @@ data Record a b c = Record
   , _b :: b
   , _c :: c
   }
-
-data Record' x y z f = Record'
-  { _x :: f x
-  , _y :: f y
-  , _z :: f z
-  }
+type Record' a b c f = Record (f a) (f b) (f c)
+type R3 = Record Double Double Double
+type R3' f = Record' Double Double Double f
 
 data RecordTag a b c (n :: Nat) where
   RecordTag_A :: RecordTag a b c 0
@@ -733,7 +730,7 @@ notCoerce = \case
   RecordTag_B -> RecordTag_B
   RecordTag_C -> RecordTag_C
 
-wrap :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
+wrap :: (forall x. x -> f x) -> Record a b c -> Record' a b c f
 wrap f r = tabulate' $ \case
   RecordTag_A -> f $ index' r RecordTag_A
   RecordTag_B -> f $ index' r RecordTag_B
@@ -742,52 +739,41 @@ wrap f r = tabulate' $ \case
 nothings = wrap (const Nothing)
 justs = wrap Just
 
-wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap' f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
-
 zip :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c, c')
 zip a b = tabulate' $ \case
   RecordTag_A -> (index' a RecordTag_A, index' b RecordTag_A)
   RecordTag_B -> (index' a RecordTag_B, index' b RecordTag_B)
   RecordTag_C -> (index' a RecordTag_C, index' b RecordTag_C)
+zipWith :: (forall f x y. x -> y -> f x y) -> Record a b c -> Record a' b' c' -> Record (f a a') (f b b') (f c c')
+zipWith f a b = tabulate' $ \case
+  RecordTag_A -> f (index' a RecordTag_A) (index' b RecordTag_A)
+  RecordTag_B -> f (index' a RecordTag_B) (index' b RecordTag_B)
+  RecordTag_C -> f (index' a RecordTag_C) (index' b RecordTag_C)
+ap :: Record (a -> a') (b -> b') (c -> c') -> Record a b c -> Record a' b' c'
+ap f x = tabulate' $ \case
+  RecordTag_A -> (index' f RecordTag_A) (index' x RecordTag_A)
+  RecordTag_B -> (index' f RecordTag_B) (index' x RecordTag_B)
+  RecordTag_C -> (index' f RecordTag_C) (index' x RecordTag_C)
+{-
+ap' :: Record (a -> a') (b -> b') (c -> c') -> Record a b c -> Record a' b' c'
+ap' f x = tabulate' $ \case
+  RecordTag_A -> (index' f RecordTag_A) (index' x RecordTag_A)
+  RecordTag_B -> (index' f RecordTag_B) (index' x RecordTag_B)
+  RecordTag_C -> (index' f RecordTag_C) (index' x RecordTag_C)
+-}
 
-type family Lol x k where
-  Lol x 0 = ()
-  Lol x 1 = x
-  Lol x 2 = (x,x)
-
---lol :: RecordTag a b c n -> RecordTag
---lol = wrap $ \case
---  RecordTag_A -> undefined
-
-fmap' :: (forall k. (forall x y z. RecordTag x y z k) -> F (Record a b c) k -> F (Record a' b' c') k)
+{-
+-- this even work in 8.6? this even make sense?
+hoist :: (forall n. F (Record a' b' c') n ~ f (F (Record a b c)) n)
+      => (forall x. x -> f x)
       -> Record a b c
       -> Record a' b' c'
-fmap' f r = tabulate' $ \case
-  RecordTag_A -> f RecordTag_A $ index' r RecordTag_A
-  RecordTag_B -> f RecordTag_B $ index' r RecordTag_B
-  RecordTag_C -> f RecordTag_C $ index' r RecordTag_C
-
-wrap'' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap'' f r = fmap' (\_ x -> f x) r
-
-{-
-hoist :: (forall n. (F (Record a b c) n ~ f) => f -> F (Record a' b' c') n) -> Record a b c -> Record a' b' c'
 hoist f r = tabulate' $ \case
   RecordTag_A -> f $ index' r RecordTag_A
   RecordTag_B -> f $ index' r RecordTag_B
   RecordTag_C -> f $ index' r RecordTag_C
 -}
-{-
-hoist :: (forall n. (F (Record a b c) n ~ f) => f -> F (Record a' b' c') n) -> Record a b c -> Record a' b' c'
-hoist f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
--}
+
 {-
 wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
 wrap' f r = tabulate' $ \t ->
@@ -804,7 +790,6 @@ wrap' f r = tabulate' $ \t ->
       NB: ‘F’ is a non-injective type family
       The type variable ‘n0’ is ambiguous
 -}
-
 {-
     • Couldn't match type ‘F (Record (f a) (f b) (f c)) k0’
                      with ‘F (Record (f a) (f b) (f c)) k’
@@ -820,35 +805,29 @@ wrap' f r = tabulate' $ \t ->
 --nothings :: Record a b c f -> Record a b c Maybe
 --fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
 --fmap' nt r = fmapRep' (\proj tag -> proj tag) r
-
 {-
 fmapRep' :: forall a b. (Representable' a, Representable' b, Coercible (Rep' a) (Rep' b))
 --         => ((forall x. Rep' a x -> x -> x))
-         => ((forall k. (Rep' a k -> F prod k)) -> (forall x. (Rep' b x -> x)))
+--         => ((forall k. (Rep' a k -> F prod k)) -> (forall x. (Rep' b x -> x)))
+         => (forall k. Rep' a k -> Rep' b k)
          -> a
          -> b
 fmapRep' f a = tabulate' $ f $ index' a
 -}
-{-
---Universe (Some.Some f)
-sequence' :: (Representable f, _) => f (g a) -> g (f a)
-sequence' fg = do
-  let frep = index fg
-      un = fmap (\v -> fmap (v,) (frep v)) universe
-      wut = sequence un :: Int
 
-  undefined
--}
+sequence' :: forall f g a. (Applicative g, Representable f, Eq (Rep f), Universe (Rep f)) => f (g a) -> g (f a)
+sequence' fg =
+  let un = fmap (\v -> fmap (v,) (index fg v)) universe
+      tabs = sequenceA un :: g [(Rep f, a)]
+      trustme = maybe (error "impossibro") id
+  in ffor tabs $ \tab -> tabulate $ \rep -> trustme (lookup rep tab)
 
---liftR2' :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c c')
---liftR2 :: asdf dsa asdf dsa asdf dsa asdf fdsa asdf fdsa asdf dsa
 {-
 instance Universe (Some.Some (RecordTag a b c)) where
   universe = [Some.This RecordTag_A, Some.This RecordTag_B, Some.This RecordTag_C]
 -}
-
 {-
-dup :: Record a b -> Record (a,a) (b,b)
+dup :: Record a b c -> Record (a,a) (b,b) (c,c)
 dup r = fmapRep' (\f t -> case t of
                      RecordTag_A -> (f t, f t)
                      RecordTag_B -> (f t, f t)
@@ -859,10 +838,10 @@ dup r = fmapRep' (\f t -> case t of
 --fmapRep' :: Record a b -> Record ) => (forall x. Rep' f x -> Rep' g x) -> f -> g
 --fmapRep' f p = do
 
-
 --instance (Representable' (f a), Representable' (f b), Representable' (f a) ~ Representable' (f b)) => Representable' (f (a,b)) where
 --  type Rep' (f (a,b)) = Rep' (f a)
 --  index'
+
 {-
 zipRep' :: (Representable' (f a), Representable' (f b), Representable' (f (a,b))
            , Rep' (f a) ~ Rep' (f b)
@@ -871,13 +850,8 @@ zipRep' :: (Representable' (f a), Representable' (f b), Representable' (f (a,b))
         => (f a) -> (f b) -> (f (a,b))
 zipRep' a b = tabulate' $ \k -> _ --(index' a k, index' b k)
 -}
+
 {-
-liftR2' :: Representable' (p a) => p a -> p (a,a)
-liftR2' p = tabulate' $ \k -> index' p k
-
-liftR2' :: Representable' (p a) => p a -> p (a,a)
-liftR2' p = tabulate' $ \k -> index' p k
-
 liftR2' :: Representable' (p a) => p a -> p (a,a)
 liftR2' p = tabulate' $ \k -> index' p k
 -}
