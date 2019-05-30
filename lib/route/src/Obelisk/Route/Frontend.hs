@@ -724,11 +724,16 @@ instance Representable' (Record a b c) where
     RecordTag_B -> _b r
     RecordTag_C -> _c r
 
-notCoerce :: RecordTag a b c n -> RecordTag a' b' c' n
-notCoerce = \case
-  RecordTag_A -> RecordTag_A
-  RecordTag_B -> RecordTag_B
-  RecordTag_C -> RecordTag_C
+
+class (Representable' a, Representable' b) => SameRep (a :: *) (b :: *) where
+  notCoerce :: Proxy a -> Proxy b -> forall n. Rep' a n -> Rep' b n
+
+instance SameRep (Record a b c) (Record a' b' c') where
+  notCoerce _ _ = \case
+    RecordTag_A -> RecordTag_A
+    RecordTag_B -> RecordTag_B
+    RecordTag_C -> RecordTag_C
+
 
 wrap :: (forall x. x -> f x) -> Record a b c -> Record' a b c f
 wrap f r = tabulate' $ \case
@@ -736,8 +741,19 @@ wrap f r = tabulate' $ \case
   RecordTag_B -> f $ index' r RecordTag_B
   RecordTag_C -> f $ index' r RecordTag_C
 
+-- this even work in 8.6?
+{-
+wrap :: (Representable' a, Representable' b, (forall n. F (Record a' b' c') n ~ f (F (Record a b c)) n))
+  => (forall x. x -> f x) -> a -> b
+wrap f r = tabulate' $ \case
+  RecordTag_A -> f $ index' r RecordTag_A
+  RecordTag_B -> f $ index' r RecordTag_B
+  RecordTag_C -> f $ index' r RecordTag_C
+-}
+
 nothings = wrap (const Nothing)
 justs = wrap Just
+
 
 zip :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c, c')
 zip a b = tabulate' $ \case
@@ -762,47 +778,6 @@ ap' f x = tabulate' $ \case
   RecordTag_C -> (index' f RecordTag_C) (index' x RecordTag_C)
 -}
 
-{-
--- this even work in 8.6? this even make sense?
-hoist :: (forall n. F (Record a' b' c') n ~ f (F (Record a b c)) n)
-      => (forall x. x -> f x)
-      -> Record a b c
-      -> Record a' b' c'
-hoist f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
--}
-
-{-
-wrap' :: (forall x. x -> f x) -> Record a b c -> Record (f a) (f b) (f c)
-wrap' f r = tabulate' $ \t ->
-  let
-    wtf :: f (F (Record a b c) n)--Double
-    wtf = f $ index' r (notCoerce t)
-    lol = wtf
-  in lol
--}
-{-
-    • Couldn't match type ‘F prod n0’ with ‘F prod n’
-      Expected type: Rep' prod k -> F prod n
-        Actual type: Rep' prod k -> F prod n0
-      NB: ‘F’ is a non-injective type family
-      The type variable ‘n0’ is ambiguous
--}
-{-
-    • Couldn't match type ‘F (Record (f a) (f b) (f c)) k0’
-                     with ‘F (Record (f a) (f b) (f c)) k’
-      Expected type: F (Record a b c) k -> F (Record (f a) (f b) (f c)) k
-        Actual type: F (Record a b c) k0
-                     -> F (Record (f a) (f b) (f c)) k0
-      NB: ‘F’ is a non-injective type family
--}
---nothings = fmap' (const Nothing)
---justs = fmap' Just
-
---(\proj tag -> id (proj tag))
---nothings :: Record a b c f -> Record a b c Maybe
 --fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
 --fmap' nt r = fmapRep' (\proj tag -> proj tag) r
 {-
