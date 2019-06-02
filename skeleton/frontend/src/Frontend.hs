@@ -75,7 +75,14 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => ArrowChoice (Step t m
     Left a -> fmap Left <$> a2b a
     Right c -> fmap Right <$> c2d c
 
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => ArrowApply (Step t m) where
+  app = mkStep $ \(Step b2c, b) -> b2c b
 
+instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, PostBuild t m) => ArrowZero (Step t m) where
+  zeroArrow = empty
+
+instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, PostBuild t m) => ArrowPlus (Step t m) where
+  (<+>) = (<|>)
 
 instance (Reflex t, MonadHold t m) => Profunctor (Step t m) where
   dimap f g (Step a2b) = fmap g $ mkStep (a2b . f)
