@@ -44,6 +44,11 @@ frontend = Frontend
 --- relax/simplify constraints as much as possible
 ---- remove redundant 'mkStep'
 --- consider efficient overrides
+--- instances
+---- arrow loop
+---- profunctors
+---- semigroupoids
+---- categories
 newtype Step t m a b = Step (a -> m (Event t b)) deriving Functor
 
 mkStep :: MonadHold t m => (a -> m (Event t b)) -> Step t m a b
