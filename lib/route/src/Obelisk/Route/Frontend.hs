@@ -582,27 +582,28 @@ churchRoute
   -> RoutedT t r m (Dynamic t a)
 churchRoute = genericRoute . church
 
-maybeRoute' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
+maybeRoute', maybeRoute''
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
 maybeRoute' n j = genericRoute $ maybe n (runRoutedT j)
-
-maybeRoute'' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
 maybeRoute'' n j = churchRoute (n, runRoutedT j)
 
-
-eitherRoute'
+eitherRoute', eitherRoute''
   :: (MonadFix m, MonadHold t m, Adjustable t m)
   => RoutedT t x m a
   -> RoutedT t y m a
   -> RoutedT t (Either x y) m (Dynamic t a)
 eitherRoute' x y = genericRoute $ either (runRoutedT x) (runRoutedT y)
+eitherRoute'' x y = churchRoute (runRoutedT x, runRoutedT y)
 
-theseRoute'
+theseRoute', theseRoute''
   :: (MonadFix m, MonadHold t m, Adjustable t m)
   => RoutedT t x m a
   -> RoutedT t y m a
   -> RoutedT t (x,y) m a
   -> RoutedT t (These x y) m (Dynamic t a)
 theseRoute' rx ry rxy = genericRoute $ these (runRoutedT rx) (runRoutedT ry) (\x y -> runRoutedT rxy $ zipDyn x y)
+theseRoute'' rx ry rxy = churchRoute (runRoutedT rx, runRoutedT ry, (\x y -> runRoutedT rxy $ zipDyn x y))
 
 
 {- dyn combinators -}
