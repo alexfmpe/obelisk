@@ -56,6 +56,19 @@ frontend = Frontend
       ev <- runW $ fwn never 4 3
       br
       display =<< holdDyn Nothing (fmap Just ev)
+
+      br
+      c <- count =<< button "outer"
+      br
+      let wdyn = ffor c $ \c' -> do
+            i <- count =<< button "inner"
+            dyn_ $ ffor i $ \i' ->
+              text $ tshow i' <> " / " <> tshow c'
+      dyn_ wdyn
+      br
+      s <- button "sample"
+      br
+      widgetHold_ (text "loading") $ current wdyn <@ s
   }
 
 tshow :: Show a => a -> T.Text
@@ -186,6 +199,21 @@ hierarchicalWorkflows = combineWorkflows $ \(_, wb0) (wa, _) -> \case
 zipWorkflows :: (Apply m, Reflex t) => Workflow t m a -> Workflow t m b -> Workflow t m (a,b)
 zipWorkflows = zipWorkflowsWith (,)
 
+{-
+-- | Runs a 'Workflow' and returns the 'Dynamic' result of the 'Workflow' (i.e., a 'Dynamic' of the value produced by the current 'Workflow' node, and whose update 'Event' fires whenever one 'Workflow' is replaced by another).
+workflow'' :: forall t m a. (Reflex t, Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
+workflow'' w0 = do
+  rec eResult <- networkHold (unWorkflow w0) $ fmap unWorkflow $ switch $ snd <$> current eResult
+  return $ fmap fst eResult
+-}
+{-
+zipWorkflows' :: (Apply m, Reflex t) => Workflow t m a -> Workflow t m b -> Workflow t m (a,b)
+zipWorkflows' wa wb = do
+  (a0, waEv) <- unWorkflow wa
+  (b0, wbEv) <- unWorkflow wb
+-}
+
+
 -- | Create a workflow that's replaced when either input workflow is replaced.
 -- The value of the output workflow is obtained by applying the provided function to the values of the input workflows
 zipWorkflowsWith :: (Apply m, Reflex t) => (a -> b -> c) -> Workflow t m a -> Workflow t m b -> Workflow t m c
@@ -216,8 +244,6 @@ combineWorkflows
   -> Workflow t m b
   -> Workflow t m c
 combineWorkflows triggerWorflows combineWidgets combineOccurrence wa0 wb0 = do
-
-
   go (These () ()) (wa0, wb0)
   where
     go occurring (wa, wb) = Workflow $ ffor (combineWidgets (unWorkflow wa, unWorkflow wb)) $ \((a0, waEv), (b0, wbEv)) ->
