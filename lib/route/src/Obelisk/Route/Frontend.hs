@@ -576,21 +576,17 @@ genericRoute
 genericRoute = genericRouted . strictDynWidget
 
 churchRoute
-  :: forall t m r r' a
-   . (MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r, Church r' (m a))
-  => Proxy r'
-  -> C r' (m a)
+  :: forall t m r r' a ch
+   .(MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r, Church r' (m a) ch)
+  => ch
   -> RoutedT t r m (Dynamic t a)
-churchRoute Proxy pm = genericRoute $ ch
-  where
-    ch :: r' -> m a
-    ch = church pm
+churchRoute = genericRoute . church
 
 maybeRoute' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
 maybeRoute' n j = genericRoute $ maybe n (runRoutedT j)
 
 maybeRoute'' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
-maybeRoute'' n j = churchRoute (Proxy :: Proxy (Maybe r')) (n, runRoutedT j)
+maybeRoute'' n j = churchRoute (n, runRoutedT j)
 
 
 eitherRoute'
@@ -632,19 +628,15 @@ dynGeneric
 dynGeneric dma k = dyn . fmap k =<< factorDynGeneric dma
 
 dynChurch
-  :: forall t m a a' b.
+  :: forall t m a a' b ch.
    ( Reflex t, MonadFix m, MonadHold t m
    , WrapsDyn t a' a
    , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
-   , Church a' (m b))
-  => Proxy a'
-  -> Dynamic t a
-  -> C a' (m b)
+   , Church a' (m b) ch)
+  => Dynamic t a
+  -> ch
   -> m (Event t b)
-dynChurch Proxy d pm = dynGeneric d $ ch
-  where
-    ch :: a' -> m b
-    ch = church pm
+dynChurch d = dynGeneric d . church
 
 dynMaybe'
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
@@ -652,7 +644,7 @@ dynMaybe'
   -> (Dynamic t a -> m z)
   -> Dynamic t (Maybe a)
   -> m (Event t z)
-dynMaybe' nothing' just' d = dynChurch (Proxy :: Proxy (Maybe (Dynamic t a))) d (nothing', just')
+dynMaybe' nothing' just' d = dynChurch d (nothing', just')
 
 dynMaybe
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
@@ -706,22 +698,17 @@ dynRequest_
   -> m ()
 dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
 
-class Church t x where
-  type C t x :: *
-  church :: C t x -> t -> x
+class Church t x c | t x -> c, c t -> x, c x -> t where
+  church :: c -> t -> x
 
-instance Church (Maybe a) x where
-  type C (Maybe a) x = (x, a -> x)
+instance Church (Maybe a) x (x, a -> x) where
   church (a, fb) = maybe a fb
 
-instance Church (Either a b) x where
-  type C (Either a b) x = (a -> x, b -> x)
+instance Church (Either a b) x (a -> x, b -> x) where
   church (fa, fb) = either fa fb
 
-instance Church (These a b) x where
-  type C (These a b) x = (a -> x, b -> x, a -> b -> x)
+instance Church (These a b) x (a -> x, b -> x, a -> b -> x) where
   church (fa, fb, fab) = these fa fb fab
 
-instance Church (a,b) x where
-  type C (a,b) x = (a -> b -> x)
-  church f = uncurry f
+instance Church (a,b) x ((a,b) -> x) where
+  church = id
