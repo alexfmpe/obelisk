@@ -28,6 +28,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
+--{-# OPTIONS_GHC -Wall #-}
+{-# OPTIONS_GHC -Wno-unused-binds #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 module Obelisk.Route.Frontend
   ( module Obelisk.Route
   , pattern (:~)
@@ -63,7 +67,7 @@ import Obelisk.Route
 
 import Control.Category (Category (..), (.))
 import Control.Category.Cartesian
-import Control.Lens hiding (Bifunctor, bimap, index, universe, element)
+import Control.Lens hiding (Bifunctor, bimap, index, universe, element, left', right')
 import Control.Monad ((<=<))
 import Control.Monad.Fix
 import Control.Monad.Primitive
@@ -75,14 +79,10 @@ import Data.Dependent.Sum (DSum (..))
 import Data.GADT.Compare
 import Data.Monoid
 import Data.Proxy
-import Data.Functor.Rep
-import qualified Data.Some as Some
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.These
-import Data.Universe
 import Data.Functor.Compose
-import GHC.TypeNats
 import Generics.SOP (Code, Generic)
 import Reflex.Class
 import Reflex.Host.Class
@@ -575,8 +575,23 @@ genericRoute
   -> RoutedT t r m (Dynamic t a)
 genericRoute = genericRouted . strictDynWidget
 
+churchRoute
+  :: forall t m r r' a
+   . (MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r, Church r' (m a))
+  => Proxy r'
+  -> C r' (m a)
+  -> RoutedT t r m (Dynamic t a)
+churchRoute Proxy pm = genericRoute $ ch
+  where
+    ch :: r' -> m a
+    ch = church pm
+
 maybeRoute' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
 maybeRoute' n j = genericRoute $ maybe n (runRoutedT j)
+
+maybeRoute'' :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
+maybeRoute'' n j = churchRoute (Proxy :: Proxy (Maybe r')) (n, runRoutedT j)
+
 
 eitherRoute'
   :: (MonadFix m, MonadHold t m, Adjustable t m)
@@ -591,7 +606,7 @@ theseRoute'
   -> RoutedT t y m a
   -> RoutedT t (x,y) m a
   -> RoutedT t (These x y) m (Dynamic t a)
-theseRoute' x y z = genericRoute $ these (runRoutedT x) (runRoutedT y) (\x y -> runRoutedT z $ zipDyn x y)
+theseRoute' rx ry rxy = genericRoute $ these (runRoutedT rx) (runRoutedT ry) (\x y -> runRoutedT rxy $ zipDyn x y)
 
 
 {- dyn combinators -}
@@ -616,6 +631,28 @@ dynGeneric
   -> m (Event t b)
 dynGeneric dma k = dyn . fmap k =<< factorDynGeneric dma
 
+dynChurch
+  :: forall t m a a' b.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+   , Church a' (m b))
+  => Proxy a'
+  -> Dynamic t a
+  -> C a' (m b)
+  -> m (Event t b)
+dynChurch Proxy d pm = dynGeneric d $ ch
+  where
+    ch :: a' -> m b
+    ch = church pm
+
+dynMaybe'
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m z
+  -> (Dynamic t a -> m z)
+  -> Dynamic t (Maybe a)
+  -> m (Event t z)
+dynMaybe' nothing' just' d = dynChurch (Proxy :: Proxy (Maybe (Dynamic t a))) d (nothing', just')
 
 dynMaybe
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
@@ -650,7 +687,6 @@ dynEither_
   -> m ()
 dynEither_ left' right' d = dynGeneric_ d $ either left' right'
 
-
 dynThese
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
   => (Dynamic t a -> m z)
@@ -659,7 +695,6 @@ dynThese
   -> Dynamic t (These a b)
   -> m (Event t z)
 dynThese this' that' these' d = dynGeneric d $ these this' that' these'
-
 
 dynRequest_
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
@@ -671,162 +706,22 @@ dynRequest_
   -> m ()
 dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
 
+class Church t x where
+  type C t x :: *
+  church :: C t x -> t -> x
 
+instance Church (Maybe a) x where
+  type C (Maybe a) x = (x, a -> x)
+  church (a, fb) = maybe a fb
 
+instance Church (Either a b) x where
+  type C (Either a b) x = (a -> x, b -> x)
+  church (fa, fb) = either fa fb
 
+instance Church (These a b) x where
+  type C (These a b) x = (a -> x, b -> x, a -> b -> x)
+  church (fa, fb, fab) = these fa fb fab
 
-
-
-
-
-
-
-
-
-
-
-
-class Representable' prod where
-  type Rep' prod :: Nat -> *
-  tabulate' :: (forall n. Rep' prod n -> F prod n) -> prod
-  index' :: prod -> (forall n. Rep' prod n -> F prod n)
-
-type family F p (k :: Nat) where
-  F (Record a b c) 0 = a
-  F (Record a b c) 1 = b
-  F (Record a b c) 2 = c
-
-data Record a b c = Record
-  { _a :: a
-  , _b :: b
-  , _c :: c
-  }
-type Record' a b c f = Record (f a) (f b) (f c)
-type R3 = Record Double Double Double
-type R3' f = Record' Double Double Double f
-
-data RecordTag a b c (n :: Nat) where
-  RecordTag_A :: RecordTag a b c 0
-  RecordTag_B :: RecordTag a b c 1
-  RecordTag_C :: RecordTag a b c 2
-
-instance Representable' (Record a b c) where
-  type Rep' (Record a b c) = RecordTag a b c
-
-  tabulate' f = Record
-    { _a = f RecordTag_A
-    , _b = f RecordTag_B
-    , _c = f RecordTag_C
-    }
-
-  index' r = \case
-    RecordTag_A -> _a r
-    RecordTag_B -> _b r
-    RecordTag_C -> _c r
-
-
-class (Representable' a, Representable' b) => SameRep (a :: *) (b :: *) where
-  notCoerce :: Proxy a -> Proxy b -> forall n. Rep' a n -> Rep' b n
-
-instance SameRep (Record a b c) (Record a' b' c') where
-  notCoerce _ _ = \case
-    RecordTag_A -> RecordTag_A
-    RecordTag_B -> RecordTag_B
-    RecordTag_C -> RecordTag_C
-
-
-wrap :: (forall x. x -> f x) -> Record a b c -> Record' a b c f
-wrap f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
-
--- this even work in 8.6?
-{-
-wrap :: (Representable' a, Representable' b, (forall n. F (Record a' b' c') n ~ f (F (Record a b c)) n))
-  => (forall x. x -> f x) -> a -> b
-wrap f r = tabulate' $ \case
-  RecordTag_A -> f $ index' r RecordTag_A
-  RecordTag_B -> f $ index' r RecordTag_B
-  RecordTag_C -> f $ index' r RecordTag_C
--}
-
-nothings = wrap (const Nothing)
-justs = wrap Just
-
-
-zip :: Record a b c -> Record a' b' c' -> Record (a, a') (b, b') (c, c')
-zip a b = tabulate' $ \case
-  RecordTag_A -> (index' a RecordTag_A, index' b RecordTag_A)
-  RecordTag_B -> (index' a RecordTag_B, index' b RecordTag_B)
-  RecordTag_C -> (index' a RecordTag_C, index' b RecordTag_C)
-zipWith :: (forall f x y. x -> y -> f x y) -> Record a b c -> Record a' b' c' -> Record (f a a') (f b b') (f c c')
-zipWith f a b = tabulate' $ \case
-  RecordTag_A -> f (index' a RecordTag_A) (index' b RecordTag_A)
-  RecordTag_B -> f (index' a RecordTag_B) (index' b RecordTag_B)
-  RecordTag_C -> f (index' a RecordTag_C) (index' b RecordTag_C)
-ap :: Record (a -> a') (b -> b') (c -> c') -> Record a b c -> Record a' b' c'
-ap f x = tabulate' $ \case
-  RecordTag_A -> (index' f RecordTag_A) (index' x RecordTag_A)
-  RecordTag_B -> (index' f RecordTag_B) (index' x RecordTag_B)
-  RecordTag_C -> (index' f RecordTag_C) (index' x RecordTag_C)
-{-
-ap' :: Record (a -> a') (b -> b') (c -> c') -> Record a b c -> Record a' b' c'
-ap' f x = tabulate' $ \case
-  RecordTag_A -> (index' f RecordTag_A) (index' x RecordTag_A)
-  RecordTag_B -> (index' f RecordTag_B) (index' x RecordTag_B)
-  RecordTag_C -> (index' f RecordTag_C) (index' x RecordTag_C)
--}
-
---fmap' :: (forall x. f x -> g x) -> Record a b c f -> Record a b c g
---fmap' nt r = fmapRep' (\proj tag -> proj tag) r
-{-
-fmapRep' :: forall a b. (Representable' a, Representable' b, Coercible (Rep' a) (Rep' b))
---         => ((forall x. Rep' a x -> x -> x))
---         => ((forall k. (Rep' a k -> F prod k)) -> (forall x. (Rep' b x -> x)))
-         => (forall k. Rep' a k -> Rep' b k)
-         -> a
-         -> b
-fmapRep' f a = tabulate' $ f $ index' a
--}
-
-sequence' :: forall f g a. (Applicative g, Representable f, Eq (Rep f), Universe (Rep f)) => f (g a) -> g (f a)
-sequence' fg =
-  let un = fmap (\v -> fmap (v,) (index fg v)) universe
-      tabs = sequenceA un :: g [(Rep f, a)]
-      trustme = maybe (error "impossibro") id
-  in ffor tabs $ \tab -> tabulate $ \rep -> trustme (lookup rep tab)
-
-{-
-instance Universe (Some.Some (RecordTag a b c)) where
-  universe = [Some.This RecordTag_A, Some.This RecordTag_B, Some.This RecordTag_C]
--}
-{-
-dup :: Record a b c -> Record (a,a) (b,b) (c,c)
-dup r = fmapRep' (\f t -> case t of
-                     RecordTag_A -> (f t, f t)
-                     RecordTag_B -> (f t, f t)
-                     RecordTag_C -> (f t, f t)
-                 ) r
--}
-
---fmapRep' :: Record a b -> Record ) => (forall x. Rep' f x -> Rep' g x) -> f -> g
---fmapRep' f p = do
-
---instance (Representable' (f a), Representable' (f b), Representable' (f a) ~ Representable' (f b)) => Representable' (f (a,b)) where
---  type Rep' (f (a,b)) = Rep' (f a)
---  index'
-
-{-
-zipRep' :: (Representable' (f a), Representable' (f b), Representable' (f (a,b))
-           , Rep' (f a) ~ Rep' (f b)
-           , Rep' (f a) ~ Rep' (f (a,b))
-           )
-        => (f a) -> (f b) -> (f (a,b))
-zipRep' a b = tabulate' $ \k -> _ --(index' a k, index' b k)
--}
-
-{-
-liftR2' :: Representable' (p a) => p a -> p (a,a)
-liftR2' p = tabulate' $ \k -> index' p k
--}
+instance Church (a,b) x where
+  type C (a,b) x = (a -> b -> x)
+  church f = uncurry f
