@@ -638,6 +638,17 @@ dynChurch
   -> m (Event t b)
 dynChurch d = dynGeneric d . church
 
+dynChurch_
+  :: forall t m a a' ch.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m
+   , Church a' (m ()) ch)
+  => Dynamic t a
+  -> ch
+  -> m ()
+dynChurch_ d = void . dynGeneric_ d . church
+
 dynMaybe'
   :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
   => m z
@@ -709,6 +720,3 @@ instance Church (Either a b) x (a -> x, b -> x) where
 
 instance Church (These a b) x (a -> x, b -> x, a -> b -> x) where
   church (fa, fb, fab) = these fa fb fab
-
-instance Church (a,b) x ((a,b) -> x) where
-  church = id
