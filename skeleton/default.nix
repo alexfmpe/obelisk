@@ -14,17 +14,4 @@ project ./. ({ pkgs, ... }@args: {
   android.displayName = "Obelisk Minimal Example";
   ios.bundleIdentifier = "systems.obsidian.obelisk.examples.minimal";
   ios.bundleName = "Obelisk Minimal Example";
-
-  overrides = pkgs.lib.foldr pkgs.lib.composeExtensions  (_: _: {}) [
-    (self: super: {
-      foundation =
-                 if ! self.ghc.isGhcjs then self.foundation
-                 else pkgs.haskell.lib.overrideCabal super.foundation (drv: {
-        postPatch = (drv.postPatch or "") + pkgs.lib.optionalString (system == "x86_64-darwin") ''
-          substituteInPlace foundation.cabal --replace 'if os(linux)' 'if os(linux) && !impl(ghcjs)'
-          substituteInPlace foundation.cabal --replace 'if os(osx)' 'if os(linux) && impl(ghcjs)'
-        '';
-      });
-    })
-  ];
 })
