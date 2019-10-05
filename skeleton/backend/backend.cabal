@@ -10,11 +10,12 @@ library
   build-depends: base
                , common
                , frontend
+               , inline-c
                , obelisk-backend
                , obelisk-route
   exposed-modules:
     Backend
-  ghc-options: -Wall
+  ghc-options: -Wall -fobject-code
 
 executable backend
   main-is: main.hs
