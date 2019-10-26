@@ -16,6 +16,7 @@ library
                  dependent-sum,
                  dependent-sum-template,
                  either,
+                 generics-sop,
                  ghcjs-dom,
                  http-types,
                  jsaddle,
@@ -32,6 +33,7 @@ library
                  tabulation,
                  text,
                  th-extras,
+                 these,
                  transformers,
                  universe,
                  universe-dependent-sum

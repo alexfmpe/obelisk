@@ -24,6 +24,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
+{-# OPTIONS_GHC -Wno-unused-binds #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 module Obelisk.Route.Frontend
   ( module Obelisk.Route
   , pattern (:~)
@@ -41,6 +44,8 @@ module Obelisk.Route.Frontend
   , eitherRoute
   , eitherRoute_
   , eitherRouted
+  , theseRoute
+  , theseRoute_
   , runRouteViewT
   , SetRouteT(..)
   , SetRoute(..)
@@ -76,7 +81,9 @@ import Data.Monoid
 import Data.Proxy
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.These
 import Data.Functor.Compose
+import Generics.SOP (Code, Generic)
 import Reflex.Class
 import Reflex.Host.Class
 import Reflex.PostBuild.Class
@@ -206,15 +213,51 @@ subRoute :: (MonadFix m, MonadHold t m, GEq r, Adjustable t m) => (forall a. r a
 subRoute f = factorRouted $ strictDynWidget $ \(c :=> r') -> do
   runRoutedT (f c) r'
 
-maybeRoute_ :: (MonadFix m, MonadHold t m, Adjustable t m) => m () -> RoutedT t r m () -> RoutedT t (Maybe r) m ()
-maybeRoute_ n j = maybeRouted $ strictDynWidget_ $ \case
-  Nothing -> n
-  Just r -> runRoutedT j r
 
-maybeRoute :: (MonadFix m, MonadHold t m, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
-maybeRoute n j = maybeRouted $ strictDynWidget $ \case
-  Nothing -> n
-  Just r -> runRoutedT j r
+{- From https://github.com/reflex-frp/reflex/pull/106 -}
+type family FunctorWrapTypeList (f :: * -> *) (xs :: [*]) :: [*] where
+  FunctorWrapTypeList f '[] = '[]
+  FunctorWrapTypeList f (x ': xs) = f x ': FunctorWrapTypeList f xs
+
+type family FunctorWrapTypeListOfLists (f :: * -> *) (xss :: [[*]]) :: [[*]] where
+  FunctorWrapTypeListOfLists f '[] = '[]
+  FunctorWrapTypeListOfLists f (xs ': xsTail) = FunctorWrapTypeList f xs ': FunctorWrapTypeListOfLists f xsTail
+
+type WrapsDyn t a' a = (Generic a', Generic a, Code a' ~ FunctorWrapTypeListOfLists (Dynamic t) (Code a))
+
+factorDynGeneric
+  :: forall t m a a'.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a)
+  => Dynamic t a -> m (Dynamic t a')
+factorDynGeneric = undefined
+{- From https://github.com/reflex-frp/reflex/pull/106 -}
+
+
+genericRouted :: (Reflex t, MonadFix m, MonadHold t m, WrapsDyn t r' r) => RoutedT t r' m a -> RoutedT t r m a
+genericRouted r = RoutedT $ ReaderT $ runRoutedT r <=< factorDynGeneric
+
+genericRoute
+  :: (MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r)
+  => (r' -> m a)
+  -> RoutedT t r m (Dynamic t a)
+genericRoute = genericRouted . strictDynWidget
+
+genericRoute_
+  :: (MonadFix m, MonadHold t m, Adjustable t m, WrapsDyn t r' r)
+  => (r' -> m ())
+  -> RoutedT t r m ()
+genericRoute_ = genericRouted . strictDynWidget_
+
+maybeRoute
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
+maybeRoute n j = genericRoute $ maybe n (runRoutedT j)
+
+maybeRoute_
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => m () -> RoutedT t r m () -> RoutedT t (Maybe r) m ()
+maybeRoute_ n j = genericRoute_ $ maybe n (runRoutedT j)
 
 {-
 maybeRoute :: (MonadFix m, MonadHold t m, GEq r, Adjustable t m) => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m a
@@ -222,19 +265,37 @@ maybeRoute f = factorRouted $ strictDynWidget $ \(c :=> r') -> do
   runRoutedT (f c) r'
 -}
 
-eitherRoute_
-  :: (MonadFix m, MonadHold t m, Adjustable t m)
-  => RoutedT t l m ()
-  -> RoutedT t r m ()
-  -> RoutedT t (Either l r) m ()
-eitherRoute_ l r = eitherRouted $ strictDynWidget_ $ either (runRoutedT l) (runRoutedT r)
-
 eitherRoute
   :: (MonadFix m, MonadHold t m, Adjustable t m)
   => RoutedT t l m a
   -> RoutedT t r m a
   -> RoutedT t (Either l r) m (Dynamic t a)
-eitherRoute l r = eitherRouted $ strictDynWidget $ either (runRoutedT l) (runRoutedT r)
+eitherRoute l r = genericRoute $ either (runRoutedT l) (runRoutedT r)
+
+eitherRoute_
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => RoutedT t l m ()
+  -> RoutedT t r m ()
+  -> RoutedT t (Either l r) m ()
+eitherRoute_ l r = genericRoute_ $ either (runRoutedT l) (runRoutedT r)
+
+
+instance Generic (These a b)
+theseRoute
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => RoutedT t x m a
+  -> RoutedT t y m a
+  -> RoutedT t (x,y) m a
+  -> RoutedT t (These x y) m (Dynamic t a)
+theseRoute rx ry rxy = genericRoute $ these (runRoutedT rx) (runRoutedT ry) (\x y -> runRoutedT rxy $ zipDyn x y)
+
+theseRoute_
+  :: (MonadFix m, MonadHold t m, Adjustable t m)
+  => RoutedT t x m ()
+  -> RoutedT t y m ()
+  -> RoutedT t (x,y) m ()
+  -> RoutedT t (These x y) m ()
+theseRoute_ rx ry rxy = genericRoute_ $ these (runRoutedT rx) (runRoutedT ry) (\x y -> runRoutedT rxy $ zipDyn x y)
 
 dsumValueCoercion :: Coercion f g -> Coercion (DSum k f) (DSum k g)
 dsumValueCoercion Coercion = Coercion
@@ -248,12 +309,10 @@ factorRouted r = RoutedT $ ReaderT $ \d -> do
   runRoutedT r $ (coerceWith (dynamicCoercion $ dsumValueCoercion dynamicIdentityCoercion) d')
 
 maybeRouted :: (Reflex t, MonadFix m, MonadHold t m) => RoutedT t (Maybe (Dynamic t a)) m b -> RoutedT t (Maybe a) m b
-maybeRouted r = RoutedT $ ReaderT $ \d -> do
-  d' <- maybeDyn d
-  runRoutedT r d'
+maybeRouted = genericRouted
 
 eitherRouted :: (Reflex t, MonadFix m, MonadHold t m) => RoutedT t (Either (Dynamic t a) (Dynamic t b)) m c -> RoutedT t (Either a b) m c
-eitherRouted r = RoutedT $ ReaderT $ runRoutedT r <=< eitherDyn
+eitherRouted = genericRouted
 
 -- | WARNING: The input 'Dynamic' must be fully constructed when this is run
 strictDynWidget :: (MonadSample t m, MonadHold t m, Adjustable t m) => (a -> m b) -> RoutedT t a m (Dynamic t b)
@@ -556,3 +615,74 @@ pathToHash = ('#' :) . fromMaybe "" . L.stripPrefix "/"
 
 hashToPath :: String -> String
 hashToPath = ('/' :) . fromMaybe "" . L.stripPrefix "#"
+
+dynGeneric_
+  :: forall t m a b.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t b a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (b -> m ())
+  -> Dynamic t a
+  -> m ()
+dynGeneric_ k dma = void $ dynGeneric k dma
+
+dynGeneric
+  :: forall t m a a' b.
+   ( Reflex t, MonadFix m, MonadHold t m
+   , WrapsDyn t a' a
+   , DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (a' -> m b)
+  -> Dynamic t a
+  -> m (Event t b)
+dynGeneric k dma = dyn . fmap k =<< factorDynGeneric dma
+
+dynMaybe
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m z
+  -> (Dynamic t a -> m z)
+  -> Dynamic t (Maybe a)
+  -> m (Event t z)
+dynMaybe nothing just = dynGeneric $ maybe nothing just
+
+dynMaybe_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m ()
+  -> (Dynamic t a -> m ())
+  -> Dynamic t (Maybe a)
+  -> m ()
+dynMaybe_ nothing just = dynGeneric_ $ maybe nothing just
+
+dynEither
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m z)
+  -> (Dynamic t b -> m z)
+  -> Dynamic t (Either a b)
+  -> m (Event t z)
+dynEither left right = dynGeneric $ either left right
+
+dynEither_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m ())
+  -> (Dynamic t b -> m ())
+  -> Dynamic t (Either a b)
+  -> m ()
+dynEither_ left right = dynGeneric_ $ either left right
+
+dynThese
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => (Dynamic t a -> m z)
+  -> (Dynamic t b -> m z)
+  -> (Dynamic t a -> Dynamic t b -> m z)
+  -> Dynamic t (These a b)
+  -> m (Event t z)
+dynThese this' that' these' = dynGeneric $ these this' that' these'
+
+dynRequest_
+  :: (DomBuilder t m, PostBuild t m, MonadHold t m, MonadFix m)
+  => m ()
+  -> (Dynamic t e -> m ())
+  -> m ()
+  -> (Dynamic t a -> m ())
+  -> Dynamic t (Maybe (Either e (Maybe a)))
+  -> m ()
+dynRequest_ loading failure missing success = dynMaybe_ loading $ dynEither_ failure $ dynMaybe_ missing success
