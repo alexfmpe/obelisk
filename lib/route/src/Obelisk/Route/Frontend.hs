@@ -251,12 +251,16 @@ genericRoute_ = genericRouted . strictDynWidget_
 
 maybeRoute
   :: (MonadFix m, MonadHold t m, Adjustable t m)
-  => m a -> RoutedT t r m a -> RoutedT t (Maybe r) m (Dynamic t a)
+  => m a
+  -> RoutedT t r m a
+  -> RoutedT t (Maybe r) m (Dynamic t a)
 maybeRoute n j = genericRoute $ maybe n (runRoutedT j)
 
 maybeRoute_
   :: (MonadFix m, MonadHold t m, Adjustable t m)
-  => m () -> RoutedT t r m () -> RoutedT t (Maybe r) m ()
+  => m ()
+  -> RoutedT t r m ()
+  -> RoutedT t (Maybe r) m ()
 maybeRoute_ n j = genericRoute_ $ maybe n (runRoutedT j)
 
 {-
