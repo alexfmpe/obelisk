@@ -60,8 +60,8 @@ frontend = Frontend
       br
       c <- count =<< button "outer"
       br
-      let wdyn = ffor c $ \c' -> do
-            i <- count =<< button "inner"
+      let wdyn = ffor c $ \(c' :: Int) -> do
+            i :: Dynamic t Int <- count =<< button "inner"
             dyn_ $ ffor i $ \i' ->
               text $ tshow i' <> " / " <> tshow c'
       dyn_ wdyn
