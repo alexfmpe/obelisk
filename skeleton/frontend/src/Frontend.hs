@@ -1,10 +1,17 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Frontend where
 
 import Control.Lens (FunctorWithIndex(..), set)
@@ -12,10 +19,14 @@ import Control.Monad ((<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
+import Control.Comonad (Comonad, duplicate, extract)
+import Control.Comonad.Cofree
 import Data.Align
 import Data.Functor.Alt
 import Data.Functor.Bind
 import Data.Functor.Compose
+import Data.Functor.Identity
+import Data.Functor.Product
 import Data.These
 import Data.Tuple (swap)
 import qualified Data.Text as T
@@ -25,6 +36,56 @@ import Obelisk.Route.Frontend
 import Reflex.Dom.Core hiding (wrap)
 
 import Common.Route
+
+--------------------------------------------------------------------------------
+-- Workflow monad
+--------------------------------------------------------------------------------
+type Step t m = Compose m (Event t)
+newtype W t m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative, Monad)
+newtype W' (t :: *) m a = W' { unW' :: Cofree (WInternal' t m) a } deriving (Functor, Apply) --Comonad
+type WInternal' t m = Compose m (Event t)
+
+instance (Reflex t, Functor m) => Comonad (W' t m) where
+  extract (W' w) = extract w
+  duplicate (W' w) = W' $ fmap W' $ duplicate w
+
+instance (Reflex t, Apply m, Applicative m) => Applicative (W' t m) where
+  pure a = W' $ (a :<) $ Compose $ (pure never)
+  (<*>) = (<.>)
+
+instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
+  join (W' (innerW :< outerC)) = W' $ (extract innerW :<) $ Compose $ do
+    o <- getCompose outerC
+    i <- runW' innerW
+
+    let flat = fmap (unW' . join . W') o
+    pure flat
+
+instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
+  (>>=) = (>>-)
+
+runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
+runW (W w0) = do
+  let go :: F (Step t m) a -> m (Event t (F (Step t m) a))
+      go w = runF w
+        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
+        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
+  rec (next0, built) <- runWithReplace (go w0) $ go <$> next
+      next <- switch <$> hold next0 built
+  return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
+
+runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (Event t a)
+runW' (W' w0) = mdo
+  let go :: Cofree (WInternal' t m) a -> m (a, Event t (Cofree (WInternal' t m) a))
+      go (a :< m) = fmap (a,) $ getCompose m
+
+  ((a0, next0), built) <- runWithReplace (go w0) (fmap go next)
+  next <- switchHold next0 $ fmap snd built
+  pb <- getPostBuild
+  pure $ leftmost [a0 <$ pb, extract <$> next]
+
+prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
+prompt = W . wrap . fmap return . Compose
 
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
@@ -53,10 +114,6 @@ frontend = Frontend
                                                a <- ma
                                                pure (a, b)) const w2 w3
 
-      ev <- runW $ fwn never 4 3
-      br
-      display =<< holdDyn Nothing (fmap Just ev)
-
       br
       c <- count =<< button "outer"
       br
@@ -69,6 +126,30 @@ frontend = Frontend
       s <- button "sample"
       br
       widgetHold_ (text "loading") $ current wdyn <@ s
+
+      br
+      br
+      text "Free workflows"
+      br
+      ev <- runW $ do
+        a <- fwn clk 5 0
+        b <- fwn clk 4 0
+        fwn clk 3 0
+      br
+      display =<< holdDyn Nothing (fmap Just ev)
+
+      br
+      br
+      text "Cofree workflows"
+      ev' <- runW' $ do
+        a <- fwn' clk 5 0
+        b <- fwn' clk (a + 1) 0
+        fwn' clk (b + 1) 0
+      br
+      display =<< holdDyn Nothing (fmap Just ev')
+      br
+      display =<< count ev'
+      pure ()
   }
 
 tshow :: Show a => a -> T.Text
@@ -84,7 +165,37 @@ wn ev n i = Workflow $ do
 ww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m (Workflow t m Int)
 ww ev n i = Workflow $ do
   next <- button "next"
+  c <- count next
+  dyn_ $ ffor c $ \(j :: Int) -> text $ "(state: " <> T.pack (show j) <> ")   "
   pure (wn ev (i + 1) 0, ww ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
+
+
+fwn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
+fwn ev n i = W $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
+  inc <- button $ T.pack $ show i <> "/" <> show n
+  pure $ (fwn ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
+{-
+fwn ev n i = do
+  pure n
+-}
+
+{-
+fww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
+fww ev n i = W $ toF $ Free $ Compose $ do
+  next <- button "next"
+  pure $ (fromF . unW) (fwn ev (i + 1) 0, fww ev n ((i + 1) `mod` n)) <$ leftmost [ev, next]
+-}
+
+mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
+
+fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
+fwn' ev n i = mkWorkflow i $ do
+  br
+  inc <- button $ T.pack $ show i <> "/" <> show n
+  c <- count inc
+  dyn_ $ ffor c $ \(j :: Int) -> text $ "(state: " <> T.pack (show j) <> ")   "
+  pure $ fwn' ev n ((i + 1) `mod` n) <$ leftmost [ev, inc]
 
 br :: DomBuilder t m => m ()
 br = el "br" blank
@@ -267,37 +378,3 @@ chainWorkflows = combineWorkflows $ \(_, wb0) (wa, _) -> \case
   This wa' -> (wa', wb0)
   That wb' -> (wa, wb')
   These wa' _ -> (wa', wb0)
-
---------------------------------------------------------------------------------
--- Workflow monad
---------------------------------------------------------------------------------
-
-type WInternal t m = F (Compose m (Event t))
-newtype W t m a = W { unW :: WInternal t m a } deriving (Functor, Applicative, Monad)
-
-runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
-runW (W w0) = do
-  let go :: WInternal t m a -> m (Event t (WInternal t m a))
-      go w = runF w
-        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
-        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
-  rec (next0, built) <- runWithReplace (go w0) $ go <$> next
-      next <- switch <$> hold next0 built
-  return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
-
-prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
-prompt = W . wrap . fmap return . Compose
-
-
-fwn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
-fwn ev n i = W $ toF $ Free $ Compose $ do
-  text "W"
-  br
-  inc <- button $ T.pack $ show i <> "/" <> show n
-  pure $ (fromF . unW) (fwn ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
-{-
-fww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
-fww ev n i = W $ toF $ Free $ Compose $ do
-  next <- button "next"
-  pure $ (fromF . unW) (fwn ev (i + 1) 0, fww ev n ((i + 1) `mod` n)) <$ leftmost [ev, next]
--}
