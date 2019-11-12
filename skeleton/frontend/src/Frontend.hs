@@ -35,6 +35,7 @@ import Obelisk.Frontend
 import Obelisk.Route
 import Obelisk.Route.Frontend
 import Reflex.Dom.Core hiding (wrap)
+import Reflex.Network
 
 import Common.Route
 
@@ -63,9 +64,12 @@ instance (Reflex t, Functor m) => Apply (W' t m) where
 
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
   join ww = W' $ do
-    (inner, outer) :: (Event t (W' t m a), Event t (W' t m (W' t m a)))  <- unW' ww
-    ev <- runW' inner
-    pure (ev, never)
+
+    (inner, outer) :: (Event t (W' t m a), Event t (W' t m (W' t m a))) <- unW' ww
+    innerDyn <- networkHold (never <$ blank) $ ffor inner $ runW'
+--    ev <- runW' inner
+    pure (switchDyn innerDyn, fmap join outer)
+
 {-
     o <- outer
     i <- runW' innerW
@@ -90,7 +94,7 @@ runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, Post
 runW' w0 = mdo
   ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
   next <- switchHold next0 $ fmap snd built
-  switchHold aEv0 $ fmap fst built
+  switchHold (traceEventWith (const "aEv0") aEv0) $ traceEventWith (const "built") $ fmap fst built
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
@@ -149,10 +153,10 @@ frontend = Frontend
       br
       br
       text "Cofree workflows"
-      ev' <- runW' $ do
-        a <- fwn' clk 5 0
-        b <- fwn' clk (a + 1) 0
-        fwn' clk (b + 1) 0
+      ev' <- runW' $ fwn' clk 5 0
+--        a <- fwn' clk 5 0
+--        b <- fwn' clk (a + 1) 0
+--        fwn' clk (b + 1) 0
       br
       display =<< holdDyn Nothing (fmap Just ev')
       br
@@ -197,11 +201,11 @@ fww ev n i = W $ toF $ Free $ Compose $ do
 --mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
 --mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
 
-mkWorkflow :: (Reflex t, Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflow a m = W' $ do
   pb <- getPostBuild
   ev <- m
-  pure (a <$ pb, ev)
+  pure (a <$ traceEventWith (const $ "pb " <> show a) pb, ev)
 
 fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
 fwn' ev n i = mkWorkflow i $ do
