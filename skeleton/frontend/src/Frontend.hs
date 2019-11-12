@@ -64,19 +64,11 @@ instance (Reflex t, Functor m) => Apply (W' t m) where
 
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
   join ww = W' $ do
-
     (inner, outer) :: (Event t (W' t m a), Event t (W' t m (W' t m a))) <- unW' ww
     innerDyn <- networkHold (never <$ blank) $ ffor inner $ runW'
---    ev <- runW' inner
-    pure (switchDyn innerDyn, fmap join outer)
+    pure (switchPromptlyDyn innerDyn, fmap join outer)
 
-{-
-    o <- outer
-    i <- runW' innerW
 
-    let flat = fmap (unW' . join . W') o
-    pure flat
--}
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
   (>>=) = (>>-)
 
@@ -94,7 +86,7 @@ runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, Post
 runW' w0 = mdo
   ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
   next <- switchHold next0 $ fmap snd built
-  switchHold (traceEventWith (const "aEv0") aEv0) $ traceEventWith (const "built") $ fmap fst built
+  switchHoldPromptly (traceEventWith (const "aEv0") aEv0) $ traceEventWith (const "built") $ fmap fst built
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
@@ -153,10 +145,13 @@ frontend = Frontend
       br
       br
       text "Cofree workflows"
-      ev' <- runW' $ fwn' clk 5 0
---        a <- fwn' clk 5 0
---        b <- fwn' clk (a + 1) 0
---        fwn' clk (b + 1) 0
+      ev' <- runW' $
+        if not True
+        then fwn' clk 5 0
+        else do
+          a <- fwn' clk 5 0
+          b <- fwn' clk (a + 1) 0
+          fwn' clk (b + 1) 0
       br
       display =<< holdDyn Nothing (fmap Just ev')
       br
