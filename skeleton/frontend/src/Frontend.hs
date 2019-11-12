@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -15,7 +16,7 @@
 module Frontend where
 
 import Control.Lens (FunctorWithIndex(..), set)
-import Control.Monad ((<=<))
+import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
@@ -42,25 +43,36 @@ import Common.Route
 --------------------------------------------------------------------------------
 type Step t m = Compose m (Event t)
 newtype W t m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative, Monad)
-newtype W' (t :: *) m a = W' { unW' :: Cofree (WInternal' t m) a } deriving (Functor, Apply) --Comonad
+newtype W' (t :: *) m a = W' { unW' :: m (Event t a, Event t (W' t m a)) } deriving (Functor)
 type WInternal' t m = Compose m (Event t)
 
+{-
 instance (Reflex t, Functor m) => Comonad (W' t m) where
   extract (W' w) = extract w
   duplicate (W' w) = W' $ fmap W' $ duplicate w
+-}
+wtf :: Monad m => m (a -> b) -> m a -> m b
+wtf = ap
 
-instance (Reflex t, Apply m, Applicative m) => Applicative (W' t m) where
-  pure a = W' $ (a :<) $ Compose $ (pure never)
-  (<*>) = (<.>)
+instance (PostBuild t m) => Applicative (W' t m) where
+  pure a = W' $ ffor getPostBuild $ \pb -> (a <$ pb, never)
+  (<*>) = undefined --ap --(<.>)
+
+instance (Reflex t, Functor m) => Apply (W' t m) where
+  (<.>) = undefined
 
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
-  join (W' (innerW :< outerC)) = W' $ (extract innerW :<) $ Compose $ do
-    o <- getCompose outerC
+  join ww = W' $ do
+    (inner, outer) :: (Event t (W' t m a), Event t (W' t m (W' t m a)))  <- unW' ww
+    ev <- runW' inner
+    pure (ev, never)
+{-
+    o <- outer
     i <- runW' innerW
 
     let flat = fmap (unW' . join . W') o
     pure flat
-
+-}
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
   (>>=) = (>>-)
 
@@ -75,14 +87,10 @@ runW (W w0) = do
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
 runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (Event t a)
-runW' (W' w0) = mdo
-  let go :: Cofree (WInternal' t m) a -> m (a, Event t (Cofree (WInternal' t m) a))
-      go (a :< m) = fmap (a,) $ getCompose m
-
-  ((a0, next0), built) <- runWithReplace (go w0) (fmap go next)
+runW' w0 = mdo
+  ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
   next <- switchHold next0 $ fmap snd built
-  pb <- getPostBuild
-  pure $ leftmost [a0 <$ pb, extract <$> next]
+  switchHold aEv0 $ fmap fst built
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
@@ -186,8 +194,14 @@ fww ev n i = W $ toF $ Free $ Compose $ do
   pure $ (fromF . unW) (fwn ev (i + 1) 0, fww ev n ((i + 1) `mod` n)) <$ leftmost [ev, next]
 -}
 
-mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
-mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
+--mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
+--mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
+
+mkWorkflow :: (Reflex t, Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflow a m = W' $ do
+  pb <- getPostBuild
+  ev <- m
+  pure (a <$ pb, ev)
 
 fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
 fwn' ev n i = mkWorkflow i $ do
