@@ -43,9 +43,27 @@ import Common.Route
 -- Workflow monad
 --------------------------------------------------------------------------------
 type Step t m = Compose m (Event t)
-newtype W t m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative, Monad)
+newtype W (t :: *) m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative)
 newtype W' (t :: *) m a = W' { unW' :: m (Event t a, Event t (W' t m a)) } deriving (Functor)
 type WInternal' t m = Compose m (Event t)
+
+instance Apply (W t m) where
+  (<.>) = undefined
+
+instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Bind (W t m) where
+  join (W ww) = do
+    let
+      go :: Free (Compose m (Event t)) (W t m a) -> Free (Compose m (Event t)) a
+      go f = join $ fmap (liftF . Compose . runW) $ f
+
+    case fromF ww of
+      Pure w -> W $ toF $ Free $ Compose $ (fmap . fmap) Pure $ runW w
+      Free f -> W $ toF $ Free $ ffor f go
+
+
+instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Monad (W t m) where
+  (>>=) = (>>-)
+--  m >>= f = W $ join $ fmap unW $ unW $ fmap f m
 
 {-
 instance (Reflex t, Functor m) => Comonad (W' t m) where
@@ -75,18 +93,21 @@ instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, Monad
 runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
 runW (W w0) = do
   let go :: F (Step t m) a -> m (Event t (F (Step t m) a))
-      go w = runF w
-        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
-        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
-  rec (next0, built) <- runWithReplace (go w0) $ go <$> next
-      next <- switch <$> hold next0 built
+      go w = case fromF w of
+        Pure a -> (
+        Free a -> undefined
+        --runF w
+--        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
+--        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
+  rec (next0, built) <- runWithReplace (go w0) $ go <$> (traceEventWith (const "next") next)
+      next <- switchHold next0 $ traceEventWith (const "built") built
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
 runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (Event t a)
 runW' w0 = mdo
   ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
   next <- switchHold next0 $ fmap snd built
-  switchHoldPromptly (traceEventWith (const "aEv0") aEv0) $ traceEventWith (const "built") $ fmap fst built
+  switchHoldPromptly aEv0 $ fmap fst built
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
@@ -135,10 +156,25 @@ frontend = Frontend
       br
       text "Free workflows"
       br
-      ev <- runW $ do
-        a <- fwn clk 5 0
-        b <- fwn clk 4 0
-        fwn clk 3 0
+      ev :: Event t Int <- runW $
+        if not True
+        then do
+          x <- pure 8
+          W $ toF $ Free $ Compose $ do
+            text "A"
+            innerStateWitness
+            pure never
+          W $ toF $ Free $ Compose $ do
+            text "B"
+            innerStateWitness
+            text $ tshow (x :: Int)
+            pure never
+        else do
+          W $ toF $ Free $ Compose $ do
+            text "A"
+            innerStateWitness
+            ev <- button "Finish"
+            pure (Pure 4 <$ ev)
       br
       display =<< holdDyn Nothing (fmap Just ev)
 
@@ -149,7 +185,9 @@ frontend = Frontend
         if not True
         then fwn' clk 5 0
         else do
+          pure ()
           a <- fwn' clk 5 0
+          pure ()
           b <- fwn' clk (a + 1) 0
           fwn' clk (b + 1) 0
       br
@@ -174,11 +212,12 @@ ww ev n i = Workflow $ do
   innerStateWitness
   pure (wn ev (i + 1) 0, ww ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
 
-
 fwn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
 fwn ev n i = W $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
+  innerStateWitness
   pure $ (fwn ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
+
 {-
 fwn ev n i = do
   pure n
