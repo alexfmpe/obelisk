@@ -165,15 +165,13 @@ tshow = T.pack . show
 wn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m Int
 wn ev n i = Workflow $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
-  c <- count inc
-  dyn_ $ ffor c $ \(j :: Int) -> text $ "(state: " <> T.pack (show j) <> ")   "
+  innerStateWitness
   pure (i, wn ev n ((i + 1) `mod` n) <$ leftmost [ev, inc])
 
 ww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m (Workflow t m Int)
 ww ev n i = Workflow $ do
   next <- button "next"
-  c <- count next
-  dyn_ $ ffor c $ \(j :: Int) -> text $ "(state: " <> T.pack (show j) <> ")   "
+  innerStateWitness
   pure (wn ev (i + 1) 0, ww ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
 
 
@@ -196,6 +194,11 @@ fww ev n i = W $ toF $ Free $ Compose $ do
 --mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
 --mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
 
+innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
+innerStateWitness = do
+  c <- count =<< button "increment inner state"
+  dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
+
 mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflow a m = W' $ do
   pb <- getPostBuild
@@ -206,8 +209,7 @@ fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t ()
 fwn' ev n i = mkWorkflow i $ do
   br
   inc <- button $ T.pack $ show i <> "/" <> show n
-  c <- count inc
-  dyn_ $ ffor c $ \(j :: Int) -> text $ "(state: " <> T.pack (show j) <> ")   "
+  innerStateWitness
   pure $ fwn' ev n ((i + 1) `mod` n) <$ leftmost [ev, inc]
 
 br :: DomBuilder t m => m ()
