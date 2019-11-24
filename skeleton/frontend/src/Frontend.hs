@@ -58,6 +58,25 @@ runW (W w0) = do
 
 
 
+newtype W'' (t :: *) m a = W'' { unW'' :: F (WInternal t m) a } deriving (Functor, Applicative, Monad)
+
+prompt'' :: (Reflex t, Functor m) => m (Event t a) -> W'' t m a
+prompt'' = W'' . wrap . fmap return . Compose
+
+runW'' :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => W'' t m a -> m (a, Event t a)
+runW'' (W'' w0) = runF w0
+  (\l -> pure (l, never))
+  (\(Compose r) -> do
+      {-
+      r      ev <- r
+      d <- networkHold (pure never) ev
+      switchHold never $ updated d
+      -}
+  )
+
+
+
+
 newtype W' (t :: *) m a = W' { unW' :: m (WInternal' t m a) } deriving Functor
 data WInternal' t m a = WInternal'
   { _w_initialValue :: a
@@ -99,25 +118,54 @@ frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = do
+      let
+        justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m) => Event t Int -> m ()
+        justShow = display <=< holdDyn Nothing . fmap Just
+
       clk <- button "replace all"
 
       br
       br
       text "Workflows - widget sequence semantics"
       br
-      ev :: Event t Int <- runW $ do
+      runW $ do
+        a <- counterW clk 5 0
+        b <- counterW clk (a + 1) 0
+        counterW clk (b + 1) 0
+      br
+
+      justShow <=< runW $ do
         x <- prompt $ do
           text $ tshow 0
           innerStateWitness
           ev <- button "Next"
+          br
           pure $ 1 <$ ev
-        prompt $ do
+        y <- prompt $ do
           text $ tshow x
           innerStateWitness
+          ev <- button "Next"
+          br
+          pure $ 2 <$ ev
+        prompt $ do
+          text $ tshow y
+          innerStateWitness
+          ev <- button "Next"
+          br
+          pure $ 3 <$ ev
+        prompt $ do
           pure never
         pure x
       br
-      display =<< holdDyn Nothing (fmap Just ev)
+
+      br
+      br
+      text "Workflows - widget menu semantics"
+
+      justShow <=< runW'' $ do
+        counterW'' clk 5 0
+--        b <- counterW'' clk (a + 1) 0
+--        counterW'' clk (b + 1) 0
 
       br
       br
@@ -189,6 +237,13 @@ counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event 
 counterW ev n i = W $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
+  pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
+
+counterW'' :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W'' t m Int
+counterW'' ev n i = W'' $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
+  inc <- button $ T.pack $ show i <> "/" <> show n
+  innerStateWitness
+  br
   pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
 
 innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
