@@ -85,9 +85,9 @@ data WInternal' t m a = WInternal'
   } deriving Functor
 
 runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
-runW' w0 = mdo
-  (wint0, wintEv) <- runWithReplace (unW' w0) (fmap unW' next)
-  next <- switchHold (_w_replacements wint0) $ fmap _w_replacements wintEv
+runW' w = mdo
+  (wint0, wintEv) <- runWithReplace (unW' w) (fmap unW' replacements)
+  replacements <- switchHold (_w_replacements wint0) (_w_replacements <$> wintEv)
   lol <- switchHold never $ fmap _w_updates wintEv
   pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
 
@@ -190,21 +190,18 @@ frontend = Frontend
       br
       br
       text "Workflows - widget hierarchy semantics"
-      res <- runW' $
-        if not True
-        then fwn' clk 5 0
-        else do
-          pure ()
-          a <- fwn' clk 5 0
-          pure ()
-          b <- fwn' clk (a + 1) 0
-          fwn' clk (b + 1) 0
+      res <- runW' $ do
+        pure ()
+        a <- fwn' clk 5 0
+        pure ()
+        b <- fwn' clk (a + 1) 0
+        fwn' clk (b + 1) 0
       br
       display =<< uncurry holdDyn res
-      text "\tLatest payload"
+      text " <- latest payload"
       br
       display =<< count (snd res)
-      text "\tTotal replacements in hierarchy"
+      text " <- replacements done"
       pure ()
   }
 
