@@ -13,7 +13,6 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE UndecidableInstances #-}
 module Frontend where
 
 import Control.Lens (FunctorWithIndex(..), set)
@@ -40,7 +39,7 @@ import Common.Route
 --------------------------------------------------------------------------------
 -- Workflow monad
 --------------------------------------------------------------------------------
-newtype W (t :: *) m a = W { unW :: F (WInternal t m) a } deriving (Functor, Applicative)
+newtype W (t :: *) m a = W { unW :: F (WInternal t m) a } deriving (Functor, Applicative, Monad)
 type WInternal t m = Compose m (Event t)
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
@@ -56,22 +55,11 @@ runW (W w0) = do
       next <- switchHold next0 $ traceEventWith (const "built") built
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
-instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Bind (W t m) where
-  join (W ww) = do
-    let
-      go :: Free (Compose m (Event t)) (W t m a) -> Free (Compose m (Event t)) a
-      go f = join $ fmap (liftF . Compose . runW) $ f
-
-    case fromF ww of
-      Pure w -> W $ toF $ Free $ Compose $ (fmap . fmap) Pure $ runW w
-      Free f -> W $ toF $ Free $ ffor f go
+instance Bind (W t m) where
+  (>>-) = (>>=)
 
 instance Apply (W t m) where
-  (<.>) = undefined
-
-instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Monad (W t m) where
-  (>>=) = (>>-)
---  m >>= f = W $ join $ fmap unW $ unW $ fmap f m
+  (<.>) = (<*>)
 
 
 
@@ -123,25 +111,16 @@ frontend = Frontend
       br
       text "Workflows - widget sequence semantics"
       br
-      ev :: Event t Int <- runW $
-        if not True
-        then do
-          x <- pure 8
-          W $ toF $ Free $ Compose $ do
-            text "A"
-            innerStateWitness
-            pure never
-          W $ toF $ Free $ Compose $ do
-            text "B"
-            innerStateWitness
-            text $ tshow (x :: Int)
-            pure never
-        else do
-          W $ toF $ Free $ Compose $ do
-            text "A"
-            innerStateWitness
-            ev <- button "Finish"
-            pure (Pure 4 <$ ev)
+      ev :: Event t Int <- runW $ do
+        x <- prompt $ do
+          text "0"
+          innerStateWitness
+          ev <- button "Next"
+          pure $ 1 <$ ev
+        prompt $ do
+          text $ tshow x
+          innerStateWitness
+          pure never
       br
       display =<< holdDyn Nothing (fmap Just ev)
 
