@@ -51,15 +51,9 @@ runW (W w0) = do
       go w = runF w
         (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
         (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
-  rec (next0, built) <- runWithReplace (go w0) $ go <$> (traceEventWith (const "next") next)
-      next <- switchHold next0 $ traceEventWith (const "built") built
+  rec (next0, built) <- runWithReplace (go w0) $ go <$> next
+      next <- switchHold next0 built
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
-
-instance Bind (W t m) where
-  (>>-) = (>>=)
-
-instance Apply (W t m) where
-  (<.>) = (<*>)
 
 
 
@@ -113,7 +107,7 @@ frontend = Frontend
       br
       ev :: Event t Int <- runW $ do
         x <- prompt $ do
-          text "0"
+          text $ tshow 0
           innerStateWitness
           ev <- button "Next"
           pure $ 1 <$ ev
@@ -121,6 +115,7 @@ frontend = Frontend
           text $ tshow x
           innerStateWitness
           pure never
+        pure x
       br
       display =<< holdDyn Nothing (fmap Just ev)
 
