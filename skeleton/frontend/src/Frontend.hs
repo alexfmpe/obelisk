@@ -12,6 +12,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Frontend where
 
@@ -20,14 +21,11 @@ import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
-import Control.Comonad (Comonad, duplicate, extract)
 import Data.Align
 import Data.Functor.Alt
 import Data.Functor.Bind
 import Data.Functor.Compose
 import Data.Functor.Extend
-import Data.Functor.Identity
-import Data.Functor.Product
 import Data.These
 import Data.Tuple (swap)
 import qualified Data.Text as T
@@ -85,7 +83,7 @@ data WInternal' t m a = WInternal'
   , _w_replacements :: Event t (W' t m a)
   } deriving Functor
 
-runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
+runW' :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => W' t m a -> m (a, Event t a)
 runW' w = mdo
   (wint0, wintEv) <- runWithReplace (unW' w) (fmap unW' replacements)
   replacements <- switchHold (_w_replacements wint0) (_w_replacements <$> wintEv)
@@ -162,7 +160,7 @@ frontend = Frontend
       display =<< uncurry holdDyn res
       text " <- latest payload"
       br
-      display =<< count (snd res)
+      display =<< count @_ @_ @Int (snd res)
       text " <- payload updates"
 
       br
@@ -225,12 +223,12 @@ innerStateWitness = do
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
 -- for testing
-mkWorkflowOverlap :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflowOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflowOverlap a m = W' $ do
   x <- m
   pure $ WInternal' a (a <$ x) x
 
-mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflow :: (Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflow a m = W' $ WInternal' a never <$> m
 
 
