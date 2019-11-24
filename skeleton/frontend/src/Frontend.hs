@@ -15,7 +15,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), set)
+import Control.Lens (FunctorWithIndex(..), bimap, set, view, _1, _2, _3)
 import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
@@ -44,8 +44,16 @@ import Common.Route
 --------------------------------------------------------------------------------
 type Step t m = Compose m (Event t)
 newtype W (t :: *) m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative)
-newtype W' (t :: *) m a = W' { unW' :: m (Event t a, Event t (W' t m a)) } deriving (Functor)
+newtype W' (t :: *) m a = W' { unW' :: m (a, Event t a, Event t (W' t m a)) }
 type WInternal' t m = Compose m (Event t)
+
+data WNode t a
+  = WNode_Terminal a
+  | WNode_Nonterminal (Event t a)
+  deriving Functor
+
+instance (Functor m, Reflex t) => Functor (W' t m) where
+  fmap f (W' w) = W' $ ffor w $ \(c, n, wev) -> (f c, fmap f n, fmap (fmap f) wev)
 
 instance Apply (W t m) where
   (<.>) = undefined
@@ -74,7 +82,7 @@ wtf :: Monad m => m (a -> b) -> m a -> m b
 wtf = ap
 
 instance (PostBuild t m) => Applicative (W' t m) where
-  pure a = W' $ ffor getPostBuild $ \pb -> (a <$ pb, never)
+  pure a = W' $ pure (a, never, never)
   (<*>) = undefined --ap --(<.>)
 
 instance (Reflex t, Functor m) => Apply (W' t m) where
@@ -82,9 +90,13 @@ instance (Reflex t, Functor m) => Apply (W' t m) where
 
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
   join ww = W' $ do
-    (inner, outer) :: (Event t (W' t m a), Event t (W' t m (W' t m a))) <- unW' ww
-    innerDyn <- networkHold (never <$ blank) $ ffor inner $ runW'
-    pure (switchPromptlyDyn innerDyn, fmap join outer)
+    (inner0, innerEv, outermostReplacements) :: (W' t m a, Event t (W' t m a), Event t (W' t m (W' t m a))) <- unW' ww
+-- :: m x -> Event t (m y) -> m (x, Event t y)
+-- :: m (a, Event t a) -> Event t (m (a, Event t a)) -> m ((a, Event t a), Event t (a, Event t a))
+
+    ((i0, i0Ev), iEv) <- runWithReplace (runW' inner0) (fmap runW' innerEv)
+    lol <- switchHold never $ fmap snd iEv
+    pure (i0, leftmost [i0Ev, fmap fst iEv, lol], fmap join outermostReplacements)
 
 
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
@@ -100,12 +112,20 @@ runW (W w0) = do
       next <- switchHold next0 $ traceEventWith (const "built") built
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
-runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (Event t a)
+runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
 runW' w0 = mdo
+  ((a0, aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
+  next <- switchHold next0 $ fmap (view _3) built
+  lol <- switchHold never $ fmap (view _2) built
+  pure (a0, leftmost [aEv0, fmap (view _1) built, lol])
+
+  --undefined
+{-
+  mdo
   ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
   next <- switchHold next0 $ fmap snd built
   switchHoldPromptly aEv0 $ fmap fst built
-
+-}
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
 
@@ -178,7 +198,7 @@ frontend = Frontend
       br
       br
       text "Cofree workflows"
-      ev' <- runW' $
+      res <- runW' $
         if not True
         then fwn' clk 5 0
         else do
@@ -188,9 +208,9 @@ frontend = Frontend
           b <- fwn' clk (a + 1) 0
           fwn' clk (b + 1) 0
       br
-      display =<< holdDyn Nothing (fmap Just ev')
+      display =<< uncurry holdDyn res
       br
-      display =<< count ev'
+      display =<< count (snd res)
       pure ()
   }
 
@@ -237,9 +257,8 @@ innerStateWitness = do
 
 mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflow a m = W' $ do
-  pb <- getPostBuild
-  ev <- m
-  pure (a <$ traceEventWith (const $ "pb " <> show a) pb, ev)
+  rep <- m
+  pure (a, never, rep)
 
 fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
 fwn' ev n i = mkWorkflow i $ do
