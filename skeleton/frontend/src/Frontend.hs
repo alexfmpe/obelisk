@@ -93,12 +93,9 @@ instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, Monad
 runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
 runW (W w0) = do
   let go :: F (Step t m) a -> m (Event t (F (Step t m) a))
-      go w = case fromF w of
-        Pure a -> (
-        Free a -> undefined
-        --runF w
---        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
---        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
+      go w = runF w
+        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
+        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
   rec (next0, built) <- runWithReplace (go w0) $ go <$> (traceEventWith (const "next") next)
       next <- switchHold next0 $ traceEventWith (const "built") built
   return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
