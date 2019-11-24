@@ -129,33 +129,6 @@ frontend = Frontend
 
       br
       br
-      text "Workflows - PR #300 (broken - instances do not preserve inner state) "
-      br
-      let
-        w2 = wn clk 2 0
-        w3 = wn clk 3 0
-
-      workflow w2 >>= display
-      br
-      workflow w3 >>= display
-      br
-      br
-
-
-      renderW "<>" $ fmap show w2 <> pure " " <> fmap show w3
-      renderW "<.>" $ (,) <$> w2 <*> w3
-
-      renderW "<!>" $ w2 <!> w3
-      renderW "join" $ join $ ww clk 5 0
-
-      renderW "<.>" $ independentWorkflows (\(ma, mb) -> do
-                                               b <- mb
-                                               text " <reversed> "
-                                               a <- ma
-                                               pure (a, b)) const w2 w3
-
-      br
-      br
       text "Workflows - widget sequence semantics"
       br
       ev :: Event t Int <- runW $
@@ -197,7 +170,37 @@ frontend = Frontend
       br
       display =<< count (snd res)
       text " <- replacements done"
-      pure ()
+
+      br
+      br
+      br
+      br
+      text "Workflows - PR #300 (broken - instances do not preserve inner state) "
+      br
+      let
+        w2 = wn clk 2 0
+        w3 = wn clk 3 0
+
+      workflow w2 >>= display
+      br
+      workflow w3 >>= display
+      br
+      br
+
+
+      renderW "<>" $ fmap show w2 <> pure " " <> fmap show w3
+      renderW "<.>" $ (,) <$> w2 <*> w3
+
+      renderW "<!>" $ w2 <!> w3
+      renderW "join" $ join $ ww clk 5 0
+
+      renderW "<.> (reversed)" $ independentWorkflows (\(ma, mb) -> do
+                                                          b <- mb
+                                                          a <- ma
+                                                          pure (a, b))
+                                                      const
+                                                      w2
+                                                      w3
   }
 
 tshow :: Show a => a -> T.Text
@@ -263,7 +266,7 @@ renderW lbl w = do
   ipayload <- if True
               then workflow' $ imap (,) w
               else uncurry holdDyn <=< workflowView' $ imap (,) w
-  dynText $ ffor ipayload $ \(k, _) -> "[" <> tshow k <> " replacements] "
+  dynText $ ffor ipayload $ \(k, _) -> tshow k <> " <- replacements done"
   br
   dynText $ ffor ipayload $ \(_, p) -> tshow p <> " <- latest payload"
   br
