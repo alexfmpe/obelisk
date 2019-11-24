@@ -125,7 +125,11 @@ frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = do
-      clk <- button "simultaneous"
+      clk <- button "click all"
+
+      br
+      br
+      text "Workflows - PR #300 (broken - instances do not preserve inner state) "
       br
       let
         w2 = wn clk 2 0
@@ -135,6 +139,8 @@ frontend = Frontend
       br
       workflow w3 >>= display
       br
+      br
+
 
       renderW "<>" $ fmap show w2 <> pure " " <> fmap show w3
       renderW "<.>" $ (,) <$> w2 <*> w3
@@ -147,19 +153,6 @@ frontend = Frontend
                                                text " <reversed> "
                                                a <- ma
                                                pure (a, b)) const w2 w3
-
-      br
-      c <- count =<< button "outer"
-      br
-      let wdyn = ffor c $ \(c' :: Int) -> do
-            i :: Dynamic t Int <- count =<< button "inner"
-            dyn_ $ ffor i $ \i' ->
-              text $ tshow i' <> " / " <> tshow c'
-      dyn_ wdyn
-      br
-      s <- button "sample"
-      br
-      widgetHold_ (text "loading") $ current wdyn <@ s
 
       br
       br
@@ -189,6 +182,8 @@ frontend = Frontend
 
       br
       br
+      br
+      br
       text "Workflows - widget hierarchy semantics"
       res <- runW' $ do
         pure ()
@@ -212,6 +207,7 @@ wn :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -
 wn ev n i = Workflow $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
+  br
   pure (i, wn ev n ((i + 1) `mod` n) <$ leftmost [ev, inc])
 
 ww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m (Workflow t m Int)
@@ -263,10 +259,14 @@ br = el "br" blank
 renderW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Show a) => T.Text -> Workflow t m a -> m ()
 renderW lbl w = do
   text lbl
+  br
   ipayload <- if True
               then workflow' $ imap (,) w
               else uncurry holdDyn <=< workflowView' $ imap (,) w
-  dynText $ ffor ipayload $ \(k, p) -> "[" <> tshow k <> "] " <> tshow p
+  dynText $ ffor ipayload $ \(k, _) -> "[" <> tshow k <> " replacements] "
+  br
+  dynText $ ffor ipayload $ \(_, p) -> tshow p <> " <- latest payload"
+  br
   br
 
 -- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
