@@ -25,6 +25,7 @@ import Data.Align
 import Data.Functor.Alt
 import Data.Functor.Bind
 import Data.Functor.Compose
+import Data.Functor.Extend
 import Data.Functor.Identity
 import Data.Functor.Product
 import Data.These
@@ -91,11 +92,8 @@ runW' w = mdo
   lol <- switchHold never $ fmap _w_updates wintEv
   pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
 
-{-
-instance (Reflex t, Functor m) => Comonad (W' t m) where
-  extract (W' w) = extract w
-  duplicate (W' w) = W' $ fmap W' $ duplicate w
--}
+instance (Reflex t, Functor m, PostBuild t m) => Extend (W' t m) where
+  duplicated (W' w) = W' $ (fmap . fmap) pure w
 
 instance (PostBuild t m) => Applicative (W' t m) where
   pure a = W' $ pure $ WInternal' a never never
