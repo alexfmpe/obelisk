@@ -225,21 +225,6 @@ fwn ev n i = W $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
   innerStateWitness
   pure $ (fwn ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
 
-{-
-fwn ev n i = do
-  pure n
--}
-
-{-
-fww :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
-fww ev n i = W $ toF $ Free $ Compose $ do
-  next <- button "next"
-  pure $ (fromF . unW) (fwn ev (i + 1) 0, fww ev n ((i + 1) `mod` n)) <$ leftmost [ev, next]
--}
-
---mkWorkflow :: (Reflex t, Functor m) => a -> m (Event t (W' t m a)) -> W' t m a
---mkWorkflow a ev = W' (a :< Compose ((fmap . fmap) unW' ev))
-
 innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
 innerStateWitness = do
   c <- count =<< button "increment inner state"
