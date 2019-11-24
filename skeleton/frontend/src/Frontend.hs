@@ -42,17 +42,20 @@ import Common.Route
 -- Workflow monad
 --------------------------------------------------------------------------------
 newtype W (t :: *) m a = W { unW :: F (WInternal t m) a } deriving (Functor, Applicative)
-newtype W' (t :: *) m a = W' { unW' :: m (WInternal' t m a) } deriving Functor
-data WInternal' t m a = WInternal'
-  { _w_initialValue :: a
-  , _w_updates :: Event t a
-  , _w_replacements :: Event t (W' t m a)
-  } deriving Functor
-
 type WInternal t m = Compose m (Event t)
 
-instance Apply (W t m) where
-  (<.>) = undefined
+prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
+prompt = W . wrap . fmap return . Compose
+
+runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
+runW (W w0) = do
+  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
+      go w = runF w
+        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
+        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
+  rec (next0, built) <- runWithReplace (go w0) $ go <$> (traceEventWith (const "next") next)
+      next <- switchHold next0 $ traceEventWith (const "built") built
+  return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
 instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Bind (W t m) where
   join (W ww) = do
@@ -64,10 +67,29 @@ instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Bind (W t
       Pure w -> W $ toF $ Free $ Compose $ (fmap . fmap) Pure $ runW w
       Free f -> W $ toF $ Free $ ffor f go
 
+instance Apply (W t m) where
+  (<.>) = undefined
 
 instance (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Monad (W t m) where
   (>>=) = (>>-)
 --  m >>= f = W $ join $ fmap unW $ unW $ fmap f m
+
+
+
+
+newtype W' (t :: *) m a = W' { unW' :: m (WInternal' t m a) } deriving Functor
+data WInternal' t m a = WInternal'
+  { _w_initialValue :: a
+  , _w_updates :: Event t a
+  , _w_replacements :: Event t (W' t m a)
+  } deriving Functor
+
+runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
+runW' w0 = mdo
+  (wint0, wintEv) <- runWithReplace (unW' w0) (fmap unW' next)
+  next <- switchHold (_w_replacements wint0) $ fmap _w_replacements wintEv
+  lol <- switchHold never $ fmap _w_updates wintEv
+  pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
 
 {-
 instance (Reflex t, Functor m) => Comonad (W' t m) where
@@ -93,29 +115,11 @@ instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuil
     lol <- switchHold never $ fmap snd iEv
     pure $ WInternal' i0 (leftmost [i0Ev, fmap fst iEv, lol]) (fmap join $ _w_replacements wint)
 
-
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
   (>>=) = (>>-)
 
-runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
-runW (W w0) = do
-  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
-      go w = runF w
-        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
-        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
-  rec (next0, built) <- runWithReplace (go w0) $ go <$> (traceEventWith (const "next") next)
-      next <- switchHold next0 $ traceEventWith (const "built") built
-  return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
 
-runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
-runW' w0 = mdo
-  (wint0, wintEv) <- runWithReplace (unW' w0) (fmap unW' next)
-  next <- switchHold (_w_replacements wint0) $ fmap _w_replacements wintEv
-  lol <- switchHold never $ fmap _w_updates wintEv
-  pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
 
-prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
-prompt = W . wrap . fmap return . Compose
 
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
