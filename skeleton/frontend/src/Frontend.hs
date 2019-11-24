@@ -89,8 +89,8 @@ runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, Post
 runW' w = mdo
   (wint0, wintEv) <- runWithReplace (unW' w) (fmap unW' replacements)
   replacements <- switchHold (_w_replacements wint0) (_w_replacements <$> wintEv)
-  lol <- switchHold never $ fmap _w_updates wintEv
-  pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
+  updates <- switchHold (_w_updates wint0) (_w_updates <$> wintEv)
+  pure (_w_initialValue wint0, leftmost [_w_initialValue <$> wintEv, updates `difference` replacements])
 
 instance (Reflex t, Functor m, PostBuild t m) => Extend (W' t m) where
   duplicated (W' w) = W' $ (fmap . fmap) pure w
@@ -105,13 +105,9 @@ instance (Reflex t, Functor m) => Apply (W' t m) where
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
   join ww = W' $ do
     wint <- unW' ww
---    WInternal' inner0 innerEv Replacements <- unW' ww
--- :: m x -> Event t (m y) -> m (x, Event t y)
--- :: m (a, Event t a) -> Event t (m (a, Event t a)) -> m ((a, Event t a), Event t (a, Event t a))
-
-    ((i0, i0Ev), iEv) <- runWithReplace (runW' $ _w_initialValue wint) (fmap runW' $ _w_updates wint)
-    lol <- switchHold never $ fmap snd iEv
-    pure $ WInternal' i0 (leftmost [i0Ev, fmap fst iEv, lol]) (fmap join $ _w_replacements wint)
+    (m0, mEv) <- runWithReplace (runW' $ _w_initialValue wint) (fmap runW' $ _w_updates wint)
+    updates <- switchHold (snd m0) $ fmap snd mEv
+    pure $ WInternal' (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _w_replacements wint)
 
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
   (>>=) = (>>-)
@@ -123,7 +119,7 @@ frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = do
-      clk <- button "click all"
+      clk <- button "replace all"
 
       br
       br
@@ -167,7 +163,7 @@ frontend = Frontend
       text " <- latest payload"
       br
       display =<< count (snd res)
-      text " <- replacements done"
+      text " <- payload updates"
 
       br
       br
@@ -228,6 +224,12 @@ innerStateWitness = do
   c <- count =<< button "increment inner state"
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
+-- for testing
+mkWorkflowOverlap :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
+mkWorkflowOverlap a m = W' $ do
+  x <- m
+  pure $ WInternal' a (a <$ x) x
+
 mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
 mkWorkflow a m = W' $ WInternal' a never <$> m
 
@@ -249,9 +251,9 @@ renderW lbl w = do
   ipayload <- if True
               then workflow' $ imap (,) w
               else uncurry holdDyn <=< workflowView' $ imap (,) w
-  dynText $ ffor ipayload $ \(k, _) -> tshow k <> " <- replacements done"
-  br
   dynText $ ffor ipayload $ \(_, p) -> tshow p <> " <- latest payload"
+  br
+  dynText $ ffor ipayload $ \(k, _) -> tshow k <> " <- payload updates"
   br
   br
 
