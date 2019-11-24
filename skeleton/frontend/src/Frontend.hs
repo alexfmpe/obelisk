@@ -15,13 +15,12 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), bimap, set, view, _1, _2, _3)
+import Control.Lens (FunctorWithIndex(..), set)
 import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
 import Control.Comonad (Comonad, duplicate, extract)
-import Control.Comonad.Cofree
 import Data.Align
 import Data.Functor.Alt
 import Data.Functor.Bind
@@ -42,18 +41,15 @@ import Common.Route
 --------------------------------------------------------------------------------
 -- Workflow monad
 --------------------------------------------------------------------------------
-type Step t m = Compose m (Event t)
-newtype W (t :: *) m a = W { unW :: F (Step t m) a } deriving (Functor, Applicative)
-newtype W' (t :: *) m a = W' { unW' :: m (a, Event t a, Event t (W' t m a)) }
-type WInternal' t m = Compose m (Event t)
+newtype W (t :: *) m a = W { unW :: F (WInternal t m) a } deriving (Functor, Applicative)
+newtype W' (t :: *) m a = W' { unW' :: m (WInternal' t m a) } deriving Functor
+data WInternal' t m a = WInternal'
+  { _w_initialValue :: a
+  , _w_updates :: Event t a
+  , _w_replacements :: Event t (W' t m a)
+  } deriving Functor
 
-data WNode t a
-  = WNode_Terminal a
-  | WNode_Nonterminal (Event t a)
-  deriving Functor
-
-instance (Functor m, Reflex t) => Functor (W' t m) where
-  fmap f (W' w) = W' $ ffor w $ \(c, n, wev) -> (f c, fmap f n, fmap (fmap f) wev)
+type WInternal t m = Compose m (Event t)
 
 instance Apply (W t m) where
   (<.>) = undefined
@@ -78,11 +74,9 @@ instance (Reflex t, Functor m) => Comonad (W' t m) where
   extract (W' w) = extract w
   duplicate (W' w) = W' $ fmap W' $ duplicate w
 -}
-wtf :: Monad m => m (a -> b) -> m a -> m b
-wtf = ap
 
 instance (PostBuild t m) => Applicative (W' t m) where
-  pure a = W' $ pure (a, never, never)
+  pure a = W' $ pure $ WInternal' a never never
   (<*>) = undefined --ap --(<.>)
 
 instance (Reflex t, Functor m) => Apply (W' t m) where
@@ -90,13 +84,14 @@ instance (Reflex t, Functor m) => Apply (W' t m) where
 
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
   join ww = W' $ do
-    (inner0, innerEv, outermostReplacements) :: (W' t m a, Event t (W' t m a), Event t (W' t m (W' t m a))) <- unW' ww
+    wint <- unW' ww
+--    WInternal' inner0 innerEv Replacements <- unW' ww
 -- :: m x -> Event t (m y) -> m (x, Event t y)
 -- :: m (a, Event t a) -> Event t (m (a, Event t a)) -> m ((a, Event t a), Event t (a, Event t a))
 
-    ((i0, i0Ev), iEv) <- runWithReplace (runW' inner0) (fmap runW' innerEv)
+    ((i0, i0Ev), iEv) <- runWithReplace (runW' $ _w_initialValue wint) (fmap runW' $ _w_updates wint)
     lol <- switchHold never $ fmap snd iEv
-    pure (i0, leftmost [i0Ev, fmap fst iEv, lol], fmap join outermostReplacements)
+    pure $ WInternal' i0 (leftmost [i0Ev, fmap fst iEv, lol]) (fmap join $ _w_replacements wint)
 
 
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
@@ -104,7 +99,7 @@ instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, Monad
 
 runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
 runW (W w0) = do
-  let go :: F (Step t m) a -> m (Event t (F (Step t m) a))
+  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
       go w = runF w
         (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
         (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
@@ -114,18 +109,11 @@ runW (W w0) = do
 
 runW' :: forall t m a. (Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W' t m a -> m (a, Event t a)
 runW' w0 = mdo
-  ((a0, aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
-  next <- switchHold next0 $ fmap (view _3) built
-  lol <- switchHold never $ fmap (view _2) built
-  pure (a0, leftmost [aEv0, fmap (view _1) built, lol])
+  (wint0, wintEv) <- runWithReplace (unW' w0) (fmap unW' next)
+  next <- switchHold (_w_replacements wint0) $ fmap _w_replacements wintEv
+  lol <- switchHold never $ fmap _w_updates wintEv
+  pure (_w_initialValue wint0, leftmost [_w_updates wint0, fmap _w_initialValue wintEv, lol])
 
-  --undefined
-{-
-  mdo
-  ((aEv0, next0), built) <- runWithReplace (unW' w0) (fmap unW' next)
-  next <- switchHold next0 $ fmap snd built
-  switchHoldPromptly aEv0 $ fmap fst built
--}
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
 prompt = W . wrap . fmap return . Compose
 
@@ -171,7 +159,7 @@ frontend = Frontend
 
       br
       br
-      text "Free workflows"
+      text "Workflows - widget sequence semantics"
       br
       ev :: Event t Int <- runW $
         if not True
@@ -197,7 +185,7 @@ frontend = Frontend
 
       br
       br
-      text "Cofree workflows"
+      text "Workflows - widget hierarchy semantics"
       res <- runW' $
         if not True
         then fwn' clk 5 0
@@ -209,8 +197,10 @@ frontend = Frontend
           fwn' clk (b + 1) 0
       br
       display =<< uncurry holdDyn res
+      text "\tLatest payload"
       br
       display =<< count (snd res)
+      text "\tTotal replacements in hierarchy"
       pure ()
   }
 
@@ -256,9 +246,8 @@ innerStateWitness = do
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
 mkWorkflow :: (Reflex t, Monad m, PostBuild t m, Show a) => a -> m (Event t (W' t m a)) -> W' t m a
-mkWorkflow a m = W' $ do
-  rep <- m
-  pure (a, never, rep)
+mkWorkflow a m = W' $ WInternal' a never <$> m
+
 
 fwn' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
 fwn' ev n i = mkWorkflow i $ do
