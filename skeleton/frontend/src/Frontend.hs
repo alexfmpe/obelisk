@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -25,8 +26,12 @@ frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = prerender_ blank $ do
+
+#ifdef  ghcjs_HOST_OS
+#else
       el "div" . text . T.pack . show =<< liftIO [C.exp| double{ cos(1) } |]
       el "div" . text . T.pack . show =<< liftIO [C.exp| double{ sin(1) } |]
+#endif
 
       text "Welcome to Obelisk!"
       el "p" $ text $ T.pack commonStuff
