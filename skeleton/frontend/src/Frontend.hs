@@ -12,11 +12,12 @@
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), set, (^?), _Left, _Right)
+import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
 import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
@@ -26,6 +27,7 @@ import Data.Functor.Alt
 import Data.Functor.Bind
 import Data.Functor.Compose
 import Data.Functor.Extend
+import Data.Maybe (fromMaybe)
 import Data.These
 import Data.Tuple (swap)
 import qualified Data.Text as T
@@ -44,47 +46,45 @@ newtype W (t :: *) m a = W { unW :: m (WInternal t m a) } deriving Functor
 data WInternal t m a
   = WInternal_Initial a
   | WInternal_Update (Event t a)
-  | WInternal_Replace (Event t (WInternal t m a))
+  | WInternal_Replace (Event t (W t m a))
   deriving Functor
+makePrisms ''WInternal
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
---prompt = W . wrap . fmap return . Compose
 prompt = W . fmap WInternal_Update
 
-runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m, _) => W t m a -> m (Event t a)
-runW (W w0) = do
---  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
-  let go :: F (WInternal t m) a -> m (Either a (Event t (F (WInternal t m) a)))
-      go w = runF w
-        (\l -> pure $ Left l)
-        -- fml
-        -- m (Event t (m (Either a (Event t (F (WInternal t m) a))))) -> m (Either a (Event t (F (WInternal t m) a)))
-        (\(Compose fr) -> ffor fr $ \ev -> Right $ ffor ev $ \w -> wrap $ Compose $ do
-            a <- w
-            b <- case a of
-              Left l -> (pure l <$) <$> (traceEvent "OO" <$> (delay 3 =<< getPostBuild))
-              Right r -> pure r
-            pure b
+runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
+runW w = mdo
+  let getReplace = fromMaybe never . preview _WInternal_Replace
+      getUpdate = fromMaybe never . preview _WInternal_Update
+  (wint0, wintEv) <- runWithReplace (unW w) (fmap unW replace)
+  replace <- switchHold (getReplace wint0) (getReplace <$> wintEv)
+  updates <- switchHold (getUpdate wint0) (getUpdate <$> wintEv)
+  pb <- getPostBuild
+  let initial0 = maybe never (<$ pb) $ preview _WInternal_Initial wint0
+      initial = fmapMaybe (preview _WInternal_Initial) wintEv
+  pure $ leftmost [initial0, initial, updates]
 
+instance (Functor m, Reflex t) => Apply (W t m) where
+  (<.>) = undefined
 
-        )
-  rec (next0, built) <- runWithReplace (go w0) $ go <$> next
-      let next0' = either (const never) id next0
-          builtR = fmapMaybe (^? _Right) built
-          builtL = fmapMaybe (^? _Left) built
-      next <- switchHold (leftmost [next0', fmap pure builtL]) builtR
-      pb <- getPostBuild
-  let evA = fmapMaybe (\w -> runF w Just (const Nothing)) $ next
-      evB = either (<$ pb) (const never) next0
-  pure $ leftmost [evA, evB]
+instance (Applicative m, Reflex t) => Applicative (W t m) where
+  pure = W . pure . WInternal_Initial
+  (<*>) = (<.>)
 
+instance (Monad m, Reflex t) => Bind (W t m) where
+  join ww = W $ unW ww >>= \case
+    WInternal_Initial (W w) -> w
+    WInternal_Update ev -> pure $ WInternal_Replace ev
+    WInternal_Replace ev -> pure $ WInternal_Replace $ ffor ev join
 
+instance (Monad m, Reflex t) => Monad (W t m) where
+  (>>=) = (>>-)
 
-
-newtype W'' (t :: *) m a = W'' { unW'' :: F (WInternal t m) a } deriving (Functor, Applicative, Monad)
+newtype W'' (t :: *) m a = W'' { unW'' :: m (WInternal t m a) } deriving Functor
 
 prompt'' :: (Reflex t, Functor m) => m (Event t a) -> W'' t m a
-prompt'' = W'' . wrap . fmap return . Compose
+prompt'' = W'' . fmap WInternal_Update
 {-
 runW'' :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => W'' t m a -> m (a, Event t a)
 runW'' (W'' w0) = runF w0
@@ -149,13 +149,6 @@ frontend = Frontend
       br
       text "Workflows - widget sequence semantics"
       br
-      justShow <=< runW $ pure 5
-      br
-      justShow <=< runW $ do
-        a <- counterW clk 5 0
-        b <- counterW clk (a + 1) 0
-        counterW clk (b + 1) 0
-      br
 
       justShow <=< runW $ do
         x <- prompt $ do
@@ -170,7 +163,7 @@ frontend = Frontend
           ev <- button "Next"
           br
           pure $ 2 <$ ev
-        prompt $ do
+        z <- prompt $ do
           text $ tshow y
           innerStateWitness
           ev <- button "Next"
@@ -178,7 +171,8 @@ frontend = Frontend
           pure $ 3 <$ ev
 --        prompt $ do
 --          pure never
-        pure x
+        pure z
+
       br
 
       br
@@ -257,13 +251,13 @@ counterWorkflow2 ev n i = Workflow $ do
   pure (counterWorkflow ev (i + 1) 0, counterWorkflow2 ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
 
 counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
-counterW ev n i = W $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
+counterW ev n i = W $ fmap WInternal_Replace $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
   pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
 
 counterW'' :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W'' t m Int
-counterW'' ev n i = W'' $ toF $ Free $ Compose $ (fmap . fmap) (fromF . unW) $ do
+counterW'' ev n i = W'' $ fmap WInternal_Replace $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
   br
