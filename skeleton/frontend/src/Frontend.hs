@@ -44,7 +44,7 @@ import Common.Route
 --------------------------------------------------------------------------------
 newtype W (t :: *) m a = W { unW :: m (WInternal t m a) } deriving Functor
 data WInternal t m a
-  = WInternal_Initial a
+  = WInternal_Terminal a
   | WInternal_Update (Event t a)
   | WInternal_Replace (Event t (W t m a))
   deriving Functor
@@ -57,24 +57,24 @@ runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m)
 runW w = mdo
   let getReplace = fromMaybe never . preview _WInternal_Replace
       getUpdate = fromMaybe never . preview _WInternal_Update
-  (wint0, wintEv) <- runWithReplace (unW w) $ leftmost [unW <$> replace, pure . WInternal_Initial <$> updates]
+  (wint0, wintEv) <- runWithReplace (unW w) $ leftmost [unW <$> replace, pure . WInternal_Terminal <$> updates]
   replace <- switchHold (getReplace wint0) (getReplace <$> wintEv)
   updates <- switchHold (getUpdate wint0) (getUpdate <$> wintEv)
   pb <- getPostBuild
-  let initial0 = maybe never (<$ pb) $ preview _WInternal_Initial wint0
-      initial = fmapMaybe (preview _WInternal_Initial) wintEv
-  pure $ leftmost [initial0, initial]
+  let terminal0 = maybe never (<$ pb) $ preview _WInternal_Terminal wint0
+      terminal = fmapMaybe (preview _WInternal_Terminal) wintEv
+  pure $ leftmost [terminal0, terminal]
 
 instance (Functor m, Reflex t) => Apply (W t m) where
   (<.>) = undefined
 
 instance (Applicative m, Reflex t) => Applicative (W t m) where
-  pure = W . pure . WInternal_Initial
+  pure = W . pure . WInternal_Terminal
   (<*>) = (<.>)
 
 instance (Monad m, Reflex t) => Bind (W t m) where
   join ww = W $ unW ww >>= \case
-    WInternal_Initial (W w) -> w
+    WInternal_Terminal (W w) -> w
     WInternal_Update ev -> pure $ WInternal_Replace ev
     WInternal_Replace ev -> pure $ WInternal_Replace $ ffor ev join
 
