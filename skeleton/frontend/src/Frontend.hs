@@ -57,13 +57,13 @@ runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m)
 runW w = mdo
   let getReplace = fromMaybe never . preview _WInternal_Replace
       getUpdate = fromMaybe never . preview _WInternal_Update
-  (wint0, wintEv) <- runWithReplace (unW w) (fmap unW replace)
+  (wint0, wintEv) <- runWithReplace (unW w) $ leftmost [unW <$> replace, pure . WInternal_Initial <$> updates]
   replace <- switchHold (getReplace wint0) (getReplace <$> wintEv)
   updates <- switchHold (getUpdate wint0) (getUpdate <$> wintEv)
   pb <- getPostBuild
   let initial0 = maybe never (<$ pb) $ preview _WInternal_Initial wint0
       initial = fmapMaybe (preview _WInternal_Initial) wintEv
-  pure $ leftmost [initial0, initial, updates]
+  pure $ leftmost [initial0, initial]
 
 instance (Functor m, Reflex t) => Apply (W t m) where
   (<.>) = undefined
@@ -163,7 +163,7 @@ frontend = Frontend
           ev <- button "Next"
           br
           pure $ 2 <$ ev
-        z <- prompt $ do
+        prompt $ do
           text $ tshow y
           innerStateWitness
           ev <- button "Next"
@@ -171,7 +171,7 @@ frontend = Frontend
           pure $ 3 <$ ev
 --        prompt $ do
 --          pure never
-        pure z
+--        pure z
 
       br
 
