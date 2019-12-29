@@ -7,6 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -15,7 +16,7 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), set)
+import Control.Lens (FunctorWithIndex(..), set, (^?), _Left, _Right)
 import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
@@ -39,21 +40,43 @@ import Common.Route
 --------------------------------------------------------------------------------
 -- Workflow monad
 --------------------------------------------------------------------------------
-newtype W (t :: *) m a = W { unW :: F (WInternal t m) a } deriving (Functor, Applicative, Monad)
-type WInternal t m = Compose m (Event t)
+newtype W (t :: *) m a = W { unW :: m (WInternal t m a) } deriving Functor
+data WInternal t m a
+  = WInternal_Initial a
+  | WInternal_Update (Event t a)
+  | WInternal_Replace (Event t (WInternal t m a))
+  deriving Functor
 
 prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
-prompt = W . wrap . fmap return . Compose
+--prompt = W . wrap . fmap return . Compose
+prompt = W . fmap WInternal_Update
 
-runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
+runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m, _) => W t m a -> m (Event t a)
 runW (W w0) = do
-  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
+--  let go :: F (WInternal t m) a -> m (Event t (F (WInternal t m) a))
+  let go :: F (WInternal t m) a -> m (Either a (Event t (F (WInternal t m) a)))
       go w = runF w
-        (\l -> (return l <$) <$> getPostBuild) --TODO: Can this just be blank?
-        (\(Compose r) -> fmap (fmapCheap (wrap . Compose)) r)
+        (\l -> pure $ Left l)
+        -- fml
+        -- m (Event t (m (Either a (Event t (F (WInternal t m) a))))) -> m (Either a (Event t (F (WInternal t m) a)))
+        (\(Compose fr) -> ffor fr $ \ev -> Right $ ffor ev $ \w -> wrap $ Compose $ do
+            a <- w
+            b <- case a of
+              Left l -> (pure l <$) <$> (traceEvent "OO" <$> (delay 3 =<< getPostBuild))
+              Right r -> pure r
+            pure b
+
+
+        )
   rec (next0, built) <- runWithReplace (go w0) $ go <$> next
-      next <- switchHold next0 built
-  return $ fmapMaybe (\w -> runF w Just (const Nothing)) next
+      let next0' = either (const never) id next0
+          builtR = fmapMaybe (^? _Right) built
+          builtL = fmapMaybe (^? _Left) built
+      next <- switchHold (leftmost [next0', fmap pure builtL]) builtR
+      pb <- getPostBuild
+  let evA = fmapMaybe (\w -> runF w Just (const Nothing)) $ next
+      evB = either (<$ pb) (const never) next0
+  pure $ leftmost [evA, evB]
 
 
 
@@ -62,18 +85,16 @@ newtype W'' (t :: *) m a = W'' { unW'' :: F (WInternal t m) a } deriving (Functo
 
 prompt'' :: (Reflex t, Functor m) => m (Event t a) -> W'' t m a
 prompt'' = W'' . wrap . fmap return . Compose
-
+{-
 runW'' :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => W'' t m a -> m (a, Event t a)
 runW'' (W'' w0) = runF w0
   (\l -> pure (l, never))
   (\(Compose r) -> do
-      {-
-      r      ev <- r
+      ev <- r
       d <- networkHold (pure never) ev
       switchHold never $ updated d
-      -}
   )
-
+-}
 
 
 
@@ -128,7 +149,9 @@ frontend = Frontend
       br
       text "Workflows - widget sequence semantics"
       br
-      runW $ do
+      justShow <=< runW $ pure 5
+      br
+      justShow <=< runW $ do
         a <- counterW clk 5 0
         b <- counterW clk (a + 1) 0
         counterW clk (b + 1) 0
@@ -153,8 +176,8 @@ frontend = Frontend
           ev <- button "Next"
           br
           pure $ 3 <$ ev
-        prompt $ do
-          pure never
+--        prompt $ do
+--          pure never
         pure x
       br
 
@@ -162,8 +185,8 @@ frontend = Frontend
       br
       text "Workflows - widget menu semantics"
 
-      justShow <=< runW'' $ do
-        counterW'' clk 5 0
+--      justShow <=< runW'' $ do
+--        counterW'' clk 5 0
 --        b <- counterW'' clk (a + 1) 0
 --        counterW'' clk (b + 1) 0
 
