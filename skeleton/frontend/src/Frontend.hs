@@ -93,10 +93,9 @@ menu :: (Reflex t, Functor m) => m (Event t a) -> Menu t m a
 menu = Menu . fmap MenuInternal_Later
 
 runMenu :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => Menu t m a -> m (Event t a)
-runMenu w = do
-  unMenu w >>= \case
-    MenuInternal_Now a -> (a <$) <$> getPostBuild
-    MenuInternal_Later ev -> pure ev
+runMenu w = unMenu w >>= \case
+  MenuInternal_Now a -> (a <$) <$> getPostBuild
+  MenuInternal_Later ev -> pure ev
 
 instance (Functor m, Reflex t) => Apply (Menu t m) where
   (<.>) = undefined
@@ -107,16 +106,11 @@ instance (Applicative m, Reflex t) => Applicative (Menu t m) where
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Menu t m) where
   join mm = menu $ do
-    let go :: Menu t m a -> m (Either a (Event t a))
-        go m = ffor (unMenu m) $ \case
-          MenuInternal_Now a -> Left a
-          MenuInternal_Later ev -> Right ev
-
     mEv <- runMenu mm
-    ((), ev) <- runWithReplace blank $ go <$> mEv
-    let (now, later) = fanEither ev
-    later' <- switchHold never later
-    pure $ leftmost [now, later']
+    ((), ev) <- runWithReplace blank $ unMenu <$> mEv
+    let now = fmapMaybe (^? _MenuInternal_Now) ev
+    later <- switchHold never $ fmapMaybe (^? _MenuInternal_Later) ev
+    pure $ leftmost [now, later]
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Menu t m) where
   (>>=) = (>>-)
@@ -208,8 +202,10 @@ frontend = Frontend
       text "Workflows - widget menu semantics"
       let btn x = (x <$) <$> button x
           layer x = menu $ do
+            a <- btn $ x <> ".A"
+            b <- btn $ x <> ".B"
             br
-            liftA2 (<!>) (btn $ x <> ".A") (btn $ x <> ".B")
+            pure $ leftmost [a,b]
 
       br
       br
