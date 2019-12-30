@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
+import Control.Applicative (liftA2)
 import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
 import Control.Monad (ap, (<=<))
 import Control.Monad.Fix
@@ -81,20 +82,47 @@ instance (Monad m, Reflex t) => Bind (W t m) where
 instance (Monad m, Reflex t) => Monad (W t m) where
   (>>=) = (>>-)
 
-newtype W'' (t :: *) m a = W'' { unW'' :: m (WInternal t m a) } deriving Functor
+newtype Menu (t :: *) m a = Menu { unMenu :: m (MenuInternal t m a) } deriving Functor
+data MenuInternal t m a
+  = MenuInternal_Now a
+  | MenuInternal_Later (Event t a)
+  deriving Functor
+makePrisms ''MenuInternal
 
-prompt'' :: (Reflex t, Functor m) => m (Event t a) -> W'' t m a
-prompt'' = W'' . fmap WInternal_Update
-{-
-runW'' :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => W'' t m a -> m (a, Event t a)
-runW'' (W'' w0) = runF w0
-  (\l -> pure (l, never))
-  (\(Compose r) -> do
-      ev <- r
-      d <- networkHold (pure never) ev
-      switchHold never $ updated d
-  )
--}
+menu :: (Reflex t, Functor m) => m (Event t a) -> Menu t m a
+menu = Menu . fmap MenuInternal_Later
+
+runMenu :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => Menu t m a -> m (Event t a)
+runMenu w = do
+  unMenu w >>= \case
+    MenuInternal_Now a -> (a <$) <$> getPostBuild
+    MenuInternal_Later ev -> pure ev
+
+instance (Functor m, Reflex t) => Apply (Menu t m) where
+  (<.>) = undefined
+
+instance (Applicative m, Reflex t) => Applicative (Menu t m) where
+  pure = Menu . pure . MenuInternal_Now
+  (<*>) = (<.>)
+
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Menu t m) where
+  join mm = menu $ do
+    let go :: Menu t m a -> m (Either a (Event t a))
+        go m = ffor (unMenu m) $ \case
+          MenuInternal_Now a -> Left a
+          MenuInternal_Later ev -> Right ev
+
+    mEv <- runMenu mm
+    ((), ev) <- runWithReplace blank $ go <$> mEv
+    let (now, later) = fanEither ev
+    later' <- switchHold never later
+    pure $ leftmost [now, later']
+
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Menu t m) where
+  (>>=) = (>>-)
+
+
+
 
 
 
@@ -140,8 +168,8 @@ frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = do
       let
-        justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m) => Event t Int -> m ()
-        justShow = display <=< holdDyn Nothing . fmap Just
+        justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m, Show a) => Event t a -> m ()
+        justShow = display . fmap tshow <=< holdDyn Nothing . fmap Just
 
       clk <- button "replace all"
 
@@ -178,11 +206,24 @@ frontend = Frontend
       br
       br
       text "Workflows - widget menu semantics"
+      let btn x = (x <$) <$> button x
+          layer x = menu $ do
+            br
+            liftA2 (<!>) (btn $ x <> ".A") (btn $ x <> ".B")
 
---      justShow <=< runW'' $ do
---        counterW'' clk 5 0
---        b <- counterW'' clk (a + 1) 0
---        counterW'' clk (b + 1) 0
+      br
+      br
+      justShow <=< runMenu $ pure 4
+      br
+      justShow <=< runMenu $ layer "_"
+      br
+      justShow <=< runMenu $ do
+        x0 <- layer "_"
+        x0' <- pure x0
+        x1 <- layer x0'
+        x2 <- layer x1
+        x3 <- layer x2
+        pure x3
 
       br
       br
@@ -254,13 +295,6 @@ counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event 
 counterW ev n i = W $ fmap WInternal_Replace $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
-  pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
-
-counterW'' :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W'' t m Int
-counterW'' ev n i = W'' $ fmap WInternal_Replace $ do
-  inc <- button $ T.pack $ show i <> "/" <> show n
-  innerStateWitness
-  br
   pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
 
 innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
