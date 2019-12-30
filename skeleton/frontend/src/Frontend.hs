@@ -89,10 +89,10 @@ data MenuInternal t m a
   deriving Functor
 makePrisms ''MenuInternal
 
-menu :: (Reflex t, Functor m) => m (Event t a) -> Menu t m a
+menu :: Functor m => m (Event t a) -> Menu t m a
 menu = Menu . fmap MenuInternal_Later
 
-runMenu :: forall t m a. (Adjustable t m, MonadHold t m, PostBuild t m) => Menu t m a -> m (Event t a)
+runMenu :: PostBuild t m => Menu t m a -> m (Event t a)
 runMenu w = unMenu w >>= \case
   MenuInternal_Now a -> (a <$) <$> getPostBuild
   MenuInternal_Later ev -> pure ev
