@@ -35,7 +35,7 @@ import qualified Data.Text as T
 import Obelisk.Frontend
 import Obelisk.Route
 import Obelisk.Route.Frontend
-import Reflex.Dom.Core hiding (wrap)
+import Reflex.Dom.Core hiding (wrap, workflow, workflowView)
 import Reflex.Network
 
 import Common.Route
@@ -238,37 +238,6 @@ frontend = Frontend
       br
       display =<< count @_ @_ @Int (snd res)
       text " <- payload updates"
-
-      br
-      br
-      br
-      br
-      text "Workflows - PR #300 (broken - instances do not preserve inner state) "
-      br
-      let
-        w2 = counterWorkflow clk 2 0
-        w3 = counterWorkflow clk 3 0
-
-      workflow w2 >>= display
-      br
-      workflow w3 >>= display
-      br
-      br
-
-
-      renderW "<>" $ fmap show w2 <> pure " " <> fmap show w3
-      renderW "<.>" $ (,) <$> w2 <*> w3
-
-      renderW "<!>" $ w2 <!> w3
-      renderW "join" $ join $ counterWorkflow2 clk 5 0
-
-      renderW "<.> (reversed)" $ independentWorkflows (\(ma, mb) -> do
-                                                          b <- mb
-                                                          a <- ma
-                                                          pure (a, b))
-                                                      const
-                                                      w2
-                                                      w3
   }
 
 tshow :: Show a => a -> T.Text
@@ -322,9 +291,7 @@ renderW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Show a) =>
 renderW lbl w = do
   text lbl
   br
-  ipayload <- if True
-              then workflow' $ imap (,) w
-              else uncurry holdDyn <=< workflowView' $ imap (,) w
+  ipayload <- workflow $ imap (,) w
   dynText $ ffor ipayload $ \(_, p) -> tshow p <> " <- latest payload"
   br
   dynText $ ffor ipayload $ \(k, _) -> tshow k <> " <- payload updates"
@@ -339,8 +306,8 @@ runWorkflow w0 = mdo
   return (a, fmap fst eResult)
 
 -- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
-workflow' :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
-workflow' = uncurry holdDyn <=< runWorkflow
+workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
+workflow = uncurry holdDyn <=< runWorkflow
 
 -- | Similar to 'workflow', but only returns the 'Event'.
 workflowView :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Event t a)
@@ -348,155 +315,3 @@ workflowView = fmap snd . runWorkflow
 
 instance Monad m => Apply (RoutedT t r m) where
   (<.>) = (<*>)
-
---------------------------------------------------------------------------------
--- Upstream
---------------------------------------------------------------------------------
-
-zipWidgets :: Apply f => (f a, f b) -> f (a,b)
-zipWidgets (a,b) = liftF2 (,) a b
-
---------------------------------------------------------------------------------
--- Upstreamed
---------------------------------------------------------------------------------
-
-workflowView' :: forall t m a. (NotReady t m, Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
-workflowView' w0 = mdo
-  ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
-  eReplace <- switchHold e0 $ fmap snd eResult
-  return (a, fmap fst eResult)
-
-  {-
-  (result, eResult) <- runWithReplace (unWorkflow w0) (fmap pure eResult)
-  return (fst result, fmap fst eResult)
-  -}
---------------------------------------------------------------------------------
--- Transforming workflows
---------------------------------------------------------------------------------
-{-# DEPRECATED mapWorkflow "Use 'fmap' instead" #-}
--- | Map a function over a 'Workflow', possibly changing the return type.
-mapWorkflow :: (Reflex t, Functor m) => (a -> b) -> Workflow t m a -> Workflow t m b
-mapWorkflow = fmap
-
---------------------------------------------------------------------------------
--- Combining occurrences
---------------------------------------------------------------------------------
-withLastOccurrences :: (a -> b -> c) -> (a, b) -> These () () -> c
-withLastOccurrences f (a,b) _ = f a b
-
-theseOccurrence :: (a,b) -> These () () -> These a b
-theseOccurrence (a,b) = set here a . set there b
-
-leftmostOccurrence :: (a,a) -> These () () -> a
-leftmostOccurrence (a,b) = \case
-  This () -> a
-  That () -> b
-  These () () -> a
-
---------------------------------------------------------------------------------
--- Combining widgets
---------------------------------------------------------------------------------
-forwardRender :: Apply f => (f a, f b) -> f (a,b)
-forwardRender (a,b) = liftF2 (,) a b
-
-backwardRender :: Apply f => (f a, f b) -> f (a,b)
-backwardRender = fmap swap . forwardRender . swap
-
-intercalateWidgets :: Apply f => f c -> (f a, f b) -> f (a,b)
-intercalateWidgets c (a,b) = (,) <$> a <. c <.> b
-
---------------------------------------------------------------------------------
--- Combining workflows
---------------------------------------------------------------------------------
-#if MIN_VERSION_these(0, 8, 0)
-instance (Apply m, Reflex t) => Semialign (Workflow t m) where
-  align = independentWorkflows forwardRender theseOccurrence
-instance (Apply m, Reflex t) => AlignWithIndex Int (Workflow t m)
-#endif
-
--- | Combine two workflows via `combineWorkflows`. Triggers of the first workflow reset the second one.
-hierarchicalWorkflows
-  :: (Functor m, Reflex t)
-  => (forall x y. (m x, m y) -> m (x,y))
-  -- ^ Compute resulting widget
-  -> ((a,b) -> These () () -> c)
-  -- ^ Compute resulting payload based on current payloads and ocurrences
-  -> Workflow t m a
-  -> Workflow t m b
-  -> Workflow t m c
-hierarchicalWorkflows = combineWorkflows $ \(_, wb0) (wa, _) -> \case
-  This wa' -> (wa', wb0)
-  That wb' -> (wa, wb')
-  These wa' _ -> (wa', wb0)
-
-zipWorkflows :: (Apply m, Reflex t) => Workflow t m a -> Workflow t m b -> Workflow t m (a,b)
-zipWorkflows = zipWorkflowsWith (,)
-
-{-
--- | Runs a 'Workflow' and returns the 'Dynamic' result of the 'Workflow' (i.e., a 'Dynamic' of the value produced by the current 'Workflow' node, and whose update 'Event' fires whenever one 'Workflow' is replaced by another).
-workflow'' :: forall t m a. (Reflex t, Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
-workflow'' w0 = do
-  rec eResult <- networkHold (unWorkflow w0) $ fmap unWorkflow $ switch $ snd <$> current eResult
-  return $ fmap fst eResult
--}
-{-
-zipWorkflows' :: (Apply m, Reflex t) => Workflow t m a -> Workflow t m b -> Workflow t m (a,b)
-zipWorkflows' wa wb = do
-  (a0, waEv) <- unWorkflow wa
-  (b0, wbEv) <- unWorkflow wb
--}
-
-
--- | Create a workflow that's replaced when either input workflow is replaced.
--- The value of the output workflow is obtained by applying the provided function to the values of the input workflows
-zipWorkflowsWith :: (Apply m, Reflex t) => (a -> b -> c) -> Workflow t m a -> Workflow t m b -> Workflow t m c
-zipWorkflowsWith f = independentWorkflows forwardRender (withLastOccurrences f)
-
--- | Combine two workflows via `combineWorkflows`. Triggers of one workflow do not affect the other one.
-independentWorkflows
-  :: (Functor m, Reflex t)
-  => (forall x y. (m x, m y) -> m (x,y))
-  -- ^ Compute resulting widget
-  -> ((a,b) -> These () () -> c)
-  -- ^ Compute resulting payload based on current payloads and ocurrences
-  -> Workflow t m a
-  -> Workflow t m b
-  -> Workflow t m c
-independentWorkflows = combineWorkflows $ \(_, _) (wa, wb) -> fromThese wa wb
-
--- | Combine two workflows. The output workflow triggers when either input triggers
-combineWorkflows
-  :: (Functor m, Reflex t)
-  => (forall wx wy. (wx, wy) -> (wx, wy) -> These wx wy -> (wx, wy))
-  -- ^ Choose the resulting workflows among original, current, and ocurring workflows
-  -> (forall x y. (m x, m y) -> m (x,y))
-  -- ^ Compute resulting widget
-  -> ((a,b) -> These () () -> c)
-  -- ^ Compute resulting payload based on current payloads and ocurrences
-  -> Workflow t m a
-  -> Workflow t m b
-  -> Workflow t m c
-combineWorkflows triggerWorflows combineWidgets combineOccurrence wa0 wb0 = do
-  go (These () ()) (wa0, wb0)
-  where
-    go occurring (wa, wb) = Workflow $ ffor (combineWidgets (unWorkflow wa, unWorkflow wb)) $ \((a0, waEv), (b0, wbEv)) ->
-      ( combineOccurrence (a0, b0) occurring
-      , ffor (align waEv wbEv) $ \tw ->
-          go (tw & here .~ () & there .~ ()) (triggerWorflows (wa0, wb0) (wa, wb) tw)
-      )
-
---------------------------------------------------------------------------------
--- Flattening workflows
---------------------------------------------------------------------------------
--- | Combine two workflows via `combineWorkflows`. Triggers of the first workflow reset the second one.
-chainWorkflows
-  :: (Functor m, Reflex t)
-  => (forall x y. (m x, m y) -> m (x,y)) -- ^ Widget combining function
-  -> ((a,b) -> These () () -> c) -- ^ Payload combining function based on ocurring workflow
-  -> Workflow t m a
-  -> Workflow t m b
-  -> Workflow t m c
-chainWorkflows = combineWorkflows $ \(_, wb0) (wa, _) -> \case
-  This wa' -> (wa', wb0)
-  That wb' -> (wa, wb')
-  These wa' _ -> (wa', wb0)
