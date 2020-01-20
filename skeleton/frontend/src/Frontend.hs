@@ -89,8 +89,8 @@ data StackInternal t m a
   deriving Functor
 makePrisms ''StackInternal
 
-menu :: Functor m => m (Event t a) -> Stack t m a
-menu = Stack . fmap StackInternal_Later
+stack :: Functor m => m (Event t a) -> Stack t m a
+stack = Stack . fmap StackInternal_Later
 
 runStack :: PostBuild t m => Stack t m a -> m (Event t a)
 runStack w = unStack w >>= \case
@@ -105,7 +105,7 @@ instance (Applicative m, Reflex t) => Applicative (Stack t m) where
   (<*>) = (<.>)
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
-  join mm = menu $ do
+  join mm = stack $ do
     mEv <- runStack mm
     ((), ev) <- runWithReplace blank $ unStack <$> mEv
     let now = fmapMaybe (^? _StackInternal_Now) ev
@@ -169,7 +169,7 @@ frontend = Frontend
 
       br
       br
-      text "Workflows - widget sequence semantics"
+      text "Workflows - wizard"
       br
 
       justShow <=< runWizard $ do
@@ -199,9 +199,9 @@ frontend = Frontend
 
       br
       br
-      text "Workflows - widget menu semantics"
+      text "Workflows - stack"
       let btn x = (x <$) <$> button x
-          layer x = menu $ do
+          layer x = stack $ do
             a <- btn $ x <> ".A"
             b <- btn $ x <> ".B"
             br
@@ -225,7 +225,7 @@ frontend = Frontend
       br
       br
       br
-      text "Workflows - widget hierarchy semantics"
+      text "Workflows - counter"
       res <- runCounter $ do
         pure ()
         a <- counterCounter clk 5 0
