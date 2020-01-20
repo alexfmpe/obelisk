@@ -120,7 +120,6 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) wher
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) where
   (>>=) = (>>-)
 
-
 --------------------------------------------------------------------------------
 -- Counter workflows
 --------------------------------------------------------------------------------
@@ -130,6 +129,9 @@ data CounterInternal t m a = CounterInternal
   , _counter_updates :: Event t a
   , _counter_replacements :: Event t (Counter t m a)
   } deriving Functor
+
+counter :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+counter a m = Counter $ CounterInternal a never <$> m
 
 runCounter :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Counter t m a -> m (a, Event t a)
 runCounter w = mdo
@@ -167,10 +169,66 @@ instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuil
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Counter t m) where
   (>>=) = (>>-)
 
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
+tshow :: Show a => a -> T.Text
+tshow = T.pack . show
+
+innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
+innerStateWitness = when False $ do
+  c <- count =<< button "increment inner state"
+  dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
+
+-- for testing
+counterOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+counterOverlap a m = Counter $ do
+  x <- m
+  pure $ CounterInternal a (a <$ x) x
+
+digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
+digit succ' ev d = counter d $ do
+  inc <- button $ tshow d
+  innerStateWitness
+  br
+  pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
+
+year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
+year = digit succ
+
+month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
+month = digit $ \m -> toEnum $ succ (fromEnum m) `mod` 12
+
+day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
+day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y m
+
+br :: DomBuilder t m => m ()
+br = el "br" blank
+
+--------------------------------------------------------------------------------
+-- Workflow
+--------------------------------------------------------------------------------
+-- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
+runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
+runWorkflow w0 = mdo
+  ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
+  eReplace <- switchHold e0 $ fmap snd eResult
+  return (a, fmap fst eResult)
+
+-- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
+workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
+workflow = uncurry holdDyn <=< runWorkflow
+
+-- | Similar to 'workflow', but only returns the 'Event'.
+workflowView :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Event t a)
+workflowView = fmap snd . runWorkflow
 
 --------------------------------------------------------------------------------
 -- Examples
 --------------------------------------------------------------------------------
+instance Monad m => Apply (RoutedT t r m) where
+  (<.>) = (<*>)
+
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
@@ -223,64 +281,3 @@ frontend = Frontend
           else button "trigger all simultaneously"
         pure ()
   }
-
-
---------------------------------------------------------------------------------
--- Utils
---------------------------------------------------------------------------------
-tshow :: Show a => a -> T.Text
-tshow = T.pack . show
-
-innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
-innerStateWitness = when False $ do
-  c <- count =<< button "increment inner state"
-  dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
-
--- for testing
-counterOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-counterOverlap a m = Counter $ do
-  x <- m
-  pure $ CounterInternal a (a <$ x) x
-
-counter :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-counter a m = Counter $ CounterInternal a never <$> m
-
-digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
-digit succ' ev d = counter d $ do
-  inc <- button $ tshow d
-  innerStateWitness
-  br
-  pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
-
-year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
-year = digit succ
-
-month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
-month = digit $ \m -> toEnum $ succ (fromEnum m) `mod` 12
-
-day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
-day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y m
-
-br :: DomBuilder t m => m ()
-br = el "br" blank
-
---------------------------------------------------------------------------------
--- Workflow
---------------------------------------------------------------------------------
--- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
-runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
-runWorkflow w0 = mdo
-  ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
-  eReplace <- switchHold e0 $ fmap snd eResult
-  return (a, fmap fst eResult)
-
--- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
-workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
-workflow = uncurry holdDyn <=< runWorkflow
-
--- | Similar to 'workflow', but only returns the 'Event'.
-workflowView :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Event t a)
-workflowView = fmap snd . runWorkflow
-
-instance Monad m => Apply (RoutedT t r m) where
-  (<.>) = (<*>)
