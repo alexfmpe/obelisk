@@ -24,10 +24,12 @@ import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
 import Data.Align
+import Data.Functor
 import Data.Functor.Alt
 import Data.Functor.Bind
 import Data.Functor.Compose
 import Data.Functor.Extend
+import Data.Hourglass
 import Data.Maybe (fromMaybe)
 import Data.These
 import Data.Tuple (swap)
@@ -134,6 +136,15 @@ runCounter w = mdo
   updates <- switchHold (_counter_updates wint0) (_counter_updates <$> wintEv)
   pure (_counter_initialValue wint0, leftmost [_counter_initialValue <$> wintEv, updates `difference` replacements])
 
+counterView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Counter t m a -> m (Event t a)
+counterView c = do
+  postBuildEv <- getPostBuild
+  (initialValue, replaceEv) <- runCounter c
+  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
+
+counterHold :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Counter t m a -> m (Dynamic t a)
+counterHold = uncurry holdDyn <=< runCounter
+
 instance (Reflex t, Functor m, PostBuild t m) => Extend (Counter t m) where
   duplicated (Counter w) = Counter $ (fmap . fmap) pure w
 
@@ -226,41 +237,20 @@ frontend = Frontend
       br
       br
       text "Workflows - counter"
-      res <- runCounter $ do
-        pure ()
-        a <- counterCounter clk 5 0
-        pure ()
-        b <- counterCounter clk (a + 1) 0
-        counterCounter clk (b + 1) 0
+      ymd <- counterHold $ do
+        y <- year clk 2000
+        m <- month clk January
+        d <- day clk y m 27
+        pure (y,m,d)
       br
-      display =<< uncurry holdDyn res
-      text " <- latest payload"
+      dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
       br
-      display =<< count @_ @_ @Int (snd res)
-      text " <- payload updates"
+      display =<< count @_ @_ @Int (updated ymd)
+      text " replacements"
   }
 
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show
-
-counterWorkflow :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m Int
-counterWorkflow ev n i = Workflow $ do
-  inc <- button $ T.pack $ show i <> "/" <> show n
-  innerStateWitness
-  br
-  pure (i, counterWorkflow ev n ((i + 1) `mod` n) <$ leftmost [ev, inc])
-
-counterWorkflow2 :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Workflow t m (Workflow t m Int)
-counterWorkflow2 ev n i = Workflow $ do
-  next <- button "next"
-  innerStateWitness
-  pure (counterWorkflow ev (i + 1) 0, counterWorkflow2 ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
-
-counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Wizard t m Int
-counterW ev n i = Wizard $ fmap WizardInternal_Replace $ do
-  inc <- button $ T.pack $ show i <> "/" <> show n
-  innerStateWitness
-  pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
 
 innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
 innerStateWitness = do
@@ -268,35 +258,40 @@ innerStateWitness = do
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
 -- for testing
-mkWorkflowOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-mkWorkflowOverlap a m = Counter $ do
+counterOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+counterOverlap a m = Counter $ do
   x <- m
   pure $ CounterInternal a (a <$ x) x
 
-mkWorkflow :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-mkWorkflow a m = Counter $ CounterInternal a never <$> m
+counter :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+counter a m = Counter $ CounterInternal a never <$> m
 
-
-counterCounter :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> Counter t m Int
-counterCounter ev n i = mkWorkflow i $ do
+year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
+year ev y = counter y $ do
+  let y' = toEnum $ succ (fromEnum y)
   br
-  inc <- button $ T.pack $ show i <> "/" <> show n
+  inc <- button $ tshow y
   innerStateWitness
-  pure $ counterCounter ev n ((i + 1) `mod` n) <$ leftmost [ev, inc]
+  pure $ year ev y' <$ leftmost [ev, inc]
+
+month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
+month ev m = counter m $ do
+  let m' = toEnum $ succ (fromEnum m) `mod` 12
+  br
+  inc <- button $ tshow m
+  innerStateWitness
+  pure $ month ev m' <$ leftmost [ev, inc]
+
+day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
+day ev y m d = counter d $ do
+  let d' = toEnum $ succ $ toEnum d `mod` daysInMonth y m
+  br
+  inc <- button $ tshow d
+  innerStateWitness
+  pure $ day ev y m d' <$ leftmost [ev, inc]
 
 br :: DomBuilder t m => m ()
 br = el "br" blank
-
-renderW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m, Show a) => T.Text -> Workflow t m a -> m ()
-renderW lbl w = do
-  text lbl
-  br
-  ipayload <- workflow $ imap (,) w
-  dynText $ ffor ipayload $ \(_, p) -> tshow p <> " <- latest payload"
-  br
-  dynText $ ffor ipayload $ \(k, _) -> tshow k <> " <- payload updates"
-  br
-  br
 
 -- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
 runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
