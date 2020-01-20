@@ -53,8 +53,8 @@ data WizardInternal t m a
   deriving Functor
 makePrisms ''WizardInternal
 
-prompt :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
-prompt = Wizard . fmap WizardInternal_Update
+wizard :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
+wizard = Wizard . fmap WizardInternal_Update
 
 runWizard :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Wizard t m a -> m (Event t a)
 runWizard w = mdo
@@ -176,6 +176,14 @@ frontend = Frontend
         justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m, Show a) => Event t a -> m ()
         justShow = display <=< holdDyn Nothing . fmap Just
 
+        btn x = (x <$) <$> button x
+
+        choice x = do
+          a <- btn $ x <> ".A"
+          b <- btn $ x <> ".B"
+          br
+          pure $ leftmost [a,b]
+
       clk <- button "replace all"
 
       br
@@ -183,29 +191,15 @@ frontend = Frontend
       text "Workflows - wizard"
       br
       do
-        justShow <=< runWizard $ do
-          x <- prompt $ do
-            text $ tshow 0
-            innerStateWitness
-            ev <- button "Next"
-            br
-            pure $ 1 <$ ev
-          y <- prompt $ do
-            text $ tshow x
-            innerStateWitness
-            ev <- button "Next"
-            br
-            pure $ 2 <$ ev
-          prompt $ do
-            text $ tshow y
-            innerStateWitness
-            ev <- button "Next"
-            br
-            pure $ 3 <$ ev
-   --        prompt $ do
-   --          pure never
-   --        pure z
+        let step = wizard . choice
 
+        justShow <=< runWizard $ do
+          x0 <- step "_"
+          x0' <- pure x0
+          x1 <- step x0'
+          x2 <- step x1
+          x3 <- step x2
+          pure x3
       br
       br
       br
@@ -213,12 +207,7 @@ frontend = Frontend
       text "Workflows - stack"
       br
       do
-        let btn x = (x <$) <$> button x
-            layer x = stack $ do
-              a <- btn $ x <> ".A"
-              b <- btn $ x <> ".B"
-              br
-              pure $ leftmost [a,b]
+        let layer = stack . choice
         justShow <=< runStack $ do
           x0 <- layer "_"
           x0' <- pure x0
