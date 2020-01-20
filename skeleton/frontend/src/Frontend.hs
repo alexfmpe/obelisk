@@ -43,76 +43,76 @@ import Common.Route
 --------------------------------------------------------------------------------
 -- Workflow monad
 --------------------------------------------------------------------------------
-newtype W (t :: *) m a = W { unW :: m (WInternal t m a) } deriving Functor
-data WInternal t m a
-  = WInternal_Terminal a
-  | WInternal_Update (Event t a)
-  | WInternal_Replace (Event t (W t m a))
+newtype Wizard (t :: *) m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
+data WizardInternal t m a
+  = WizardInternal_Terminal a
+  | WizardInternal_Update (Event t a)
+  | WizardInternal_Replace (Event t (Wizard t m a))
   deriving Functor
-makePrisms ''WInternal
+makePrisms ''WizardInternal
 
-prompt :: (Reflex t, Functor m) => m (Event t a) -> W t m a
-prompt = W . fmap WInternal_Update
+prompt :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
+prompt = Wizard . fmap WizardInternal_Update
 
-runW :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => W t m a -> m (Event t a)
-runW w = mdo
-  let getReplace = fromMaybe never . preview _WInternal_Replace
-      getUpdate = fromMaybe never . preview _WInternal_Update
-  (wint0, wintEv) <- runWithReplace (unW w) $ leftmost [unW <$> replace, pure . WInternal_Terminal <$> updates]
+runWizard :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Wizard t m a -> m (Event t a)
+runWizard w = mdo
+  let getReplace = fromMaybe never . preview _WizardInternal_Replace
+      getUpdate = fromMaybe never . preview _WizardInternal_Update
+  (wint0, wintEv) <- runWithReplace (unWizard w) $ leftmost [unWizard <$> replace, pure . WizardInternal_Terminal <$> updates]
   replace <- switchHold (getReplace wint0) (getReplace <$> wintEv)
   updates <- switchHold (getUpdate wint0) (getUpdate <$> wintEv)
   pb <- getPostBuild
-  let terminal0 = maybe never (<$ pb) $ preview _WInternal_Terminal wint0
-      terminal = fmapMaybe (preview _WInternal_Terminal) wintEv
+  let terminal0 = maybe never (<$ pb) $ preview _WizardInternal_Terminal wint0
+      terminal = fmapMaybe (preview _WizardInternal_Terminal) wintEv
   pure $ leftmost [terminal0, terminal]
 
-instance (Functor m, Reflex t) => Apply (W t m) where
+instance (Functor m, Reflex t) => Apply (Wizard t m) where
   (<.>) = undefined
 
-instance (Applicative m, Reflex t) => Applicative (W t m) where
-  pure = W . pure . WInternal_Terminal
+instance (Applicative m, Reflex t) => Applicative (Wizard t m) where
+  pure = Wizard . pure . WizardInternal_Terminal
   (<*>) = (<.>)
 
-instance (Monad m, Reflex t) => Bind (W t m) where
-  join ww = W $ unW ww >>= \case
-    WInternal_Terminal (W w) -> w
-    WInternal_Update ev -> pure $ WInternal_Replace ev
-    WInternal_Replace ev -> pure $ WInternal_Replace $ ffor ev join
+instance (Monad m, Reflex t) => Bind (Wizard t m) where
+  join ww = Wizard $ unWizard ww >>= \case
+    WizardInternal_Terminal (Wizard w) -> w
+    WizardInternal_Update ev -> pure $ WizardInternal_Replace ev
+    WizardInternal_Replace ev -> pure $ WizardInternal_Replace $ ffor ev join
 
-instance (Monad m, Reflex t) => Monad (W t m) where
+instance (Monad m, Reflex t) => Monad (Wizard t m) where
   (>>=) = (>>-)
 
-newtype Menu (t :: *) m a = Menu { unMenu :: m (MenuInternal t m a) } deriving Functor
-data MenuInternal t m a
-  = MenuInternal_Now a
-  | MenuInternal_Later (Event t a)
+newtype Stack (t :: *) m a = Stack { unStack :: m (StackInternal t m a) } deriving Functor
+data StackInternal t m a
+  = StackInternal_Now a
+  | StackInternal_Later (Event t a)
   deriving Functor
-makePrisms ''MenuInternal
+makePrisms ''StackInternal
 
-menu :: Functor m => m (Event t a) -> Menu t m a
-menu = Menu . fmap MenuInternal_Later
+menu :: Functor m => m (Event t a) -> Stack t m a
+menu = Stack . fmap StackInternal_Later
 
-runMenu :: PostBuild t m => Menu t m a -> m (Event t a)
-runMenu w = unMenu w >>= \case
-  MenuInternal_Now a -> (a <$) <$> getPostBuild
-  MenuInternal_Later ev -> pure ev
+runStack :: PostBuild t m => Stack t m a -> m (Event t a)
+runStack w = unStack w >>= \case
+  StackInternal_Now a -> (a <$) <$> getPostBuild
+  StackInternal_Later ev -> pure ev
 
-instance (Functor m, Reflex t) => Apply (Menu t m) where
+instance (Functor m, Reflex t) => Apply (Stack t m) where
   (<.>) = undefined
 
-instance (Applicative m, Reflex t) => Applicative (Menu t m) where
-  pure = Menu . pure . MenuInternal_Now
+instance (Applicative m, Reflex t) => Applicative (Stack t m) where
+  pure = Stack . pure . StackInternal_Now
   (<*>) = (<.>)
 
-instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Menu t m) where
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
   join mm = menu $ do
-    mEv <- runMenu mm
-    ((), ev) <- runWithReplace blank $ unMenu <$> mEv
-    let now = fmapMaybe (^? _MenuInternal_Now) ev
-    later <- switchHold never $ fmapMaybe (^? _MenuInternal_Later) ev
+    mEv <- runStack mm
+    ((), ev) <- runWithReplace blank $ unStack <$> mEv
+    let now = fmapMaybe (^? _StackInternal_Now) ev
+    later <- switchHold never $ fmapMaybe (^? _StackInternal_Later) ev
     pure $ leftmost [now, later]
 
-instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Menu t m) where
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) where
   (>>=) = (>>-)
 
 
@@ -120,38 +120,38 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Menu t m) wher
 
 
 
-newtype W' (t :: *) m a = W' { unW' :: m (WInternal' t m a) } deriving Functor
-data WInternal' t m a = WInternal'
-  { _w_initialValue :: a
-  , _w_updates :: Event t a
-  , _w_replacements :: Event t (W' t m a)
+newtype Counter (t :: *) m a = Counter { unCounter :: m (CounterInternal t m a) } deriving Functor
+data CounterInternal t m a = CounterInternal
+  { _counter_initialValue :: a
+  , _counter_updates :: Event t a
+  , _counter_replacements :: Event t (Counter t m a)
   } deriving Functor
 
-runW' :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => W' t m a -> m (a, Event t a)
-runW' w = mdo
-  (wint0, wintEv) <- runWithReplace (unW' w) (fmap unW' replacements)
-  replacements <- switchHold (_w_replacements wint0) (_w_replacements <$> wintEv)
-  updates <- switchHold (_w_updates wint0) (_w_updates <$> wintEv)
-  pure (_w_initialValue wint0, leftmost [_w_initialValue <$> wintEv, updates `difference` replacements])
+runCounter :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Counter t m a -> m (a, Event t a)
+runCounter w = mdo
+  (wint0, wintEv) <- runWithReplace (unCounter w) (fmap unCounter replacements)
+  replacements <- switchHold (_counter_replacements wint0) (_counter_replacements <$> wintEv)
+  updates <- switchHold (_counter_updates wint0) (_counter_updates <$> wintEv)
+  pure (_counter_initialValue wint0, leftmost [_counter_initialValue <$> wintEv, updates `difference` replacements])
 
-instance (Reflex t, Functor m, PostBuild t m) => Extend (W' t m) where
-  duplicated (W' w) = W' $ (fmap . fmap) pure w
+instance (Reflex t, Functor m, PostBuild t m) => Extend (Counter t m) where
+  duplicated (Counter w) = Counter $ (fmap . fmap) pure w
 
-instance (PostBuild t m) => Applicative (W' t m) where
-  pure a = W' $ pure $ WInternal' a never never
+instance (PostBuild t m) => Applicative (Counter t m) where
+  pure a = Counter $ pure $ CounterInternal a never never
   (<*>) = undefined --ap --(<.>)
 
-instance (Reflex t, Functor m) => Apply (W' t m) where
+instance (Reflex t, Functor m) => Apply (Counter t m) where
   (<.>) = undefined
 
-instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (W' t m) where
-  join ww = W' $ do
-    wint <- unW' ww
-    (m0, mEv) <- runWithReplace (runW' $ _w_initialValue wint) (fmap runW' $ _w_updates wint)
+instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (Counter t m) where
+  join ww = Counter $ do
+    wint <- unCounter ww
+    (m0, mEv) <- runWithReplace (runCounter $ _counter_initialValue wint) (fmap runCounter $ _counter_updates wint)
     updates <- switchHold (snd m0) $ fmap snd mEv
-    pure $ WInternal' (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _w_replacements wint)
+    pure $ CounterInternal (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _counter_replacements wint)
 
-instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (W' t m) where
+instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Counter t m) where
   (>>=) = (>>-)
 
 
@@ -172,7 +172,7 @@ frontend = Frontend
       text "Workflows - widget sequence semantics"
       br
 
-      justShow <=< runW $ do
+      justShow <=< runWizard $ do
         x <- prompt $ do
           text $ tshow 0
           innerStateWitness
@@ -209,11 +209,11 @@ frontend = Frontend
 
       br
       br
-      justShow <=< runMenu $ pure 4
+      justShow <=< runStack $ pure 4
       br
-      justShow <=< runMenu $ layer "_"
+      justShow <=< runStack $ layer "_"
       br
-      justShow <=< runMenu $ do
+      justShow <=< runStack $ do
         x0 <- layer "_"
         x0' <- pure x0
         x1 <- layer x0'
@@ -226,12 +226,12 @@ frontend = Frontend
       br
       br
       text "Workflows - widget hierarchy semantics"
-      res <- runW' $ do
+      res <- runCounter $ do
         pure ()
-        a <- counterW' clk 5 0
+        a <- counterCounter clk 5 0
         pure ()
-        b <- counterW' clk (a + 1) 0
-        counterW' clk (b + 1) 0
+        b <- counterCounter clk (a + 1) 0
+        counterCounter clk (b + 1) 0
       br
       display =<< uncurry holdDyn res
       text " <- latest payload"
@@ -287,8 +287,8 @@ counterWorkflow2 ev n i = Workflow $ do
   innerStateWitness
   pure (counterWorkflow ev (i + 1) 0, counterWorkflow2 ev n ((i + 1) `mod` n) <$ leftmost [ev, next])
 
-counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> W t m Int
-counterW ev n i = W $ fmap WInternal_Replace $ do
+counterW :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => Event t () -> Int -> Int -> Wizard t m Int
+counterW ev n i = Wizard $ fmap WizardInternal_Replace $ do
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
   pure $ (counterW ev n ((i + 1) `mod` n)) <$ leftmost [ev, inc]
@@ -299,21 +299,21 @@ innerStateWitness = do
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
 -- for testing
-mkWorkflowOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
-mkWorkflowOverlap a m = W' $ do
+mkWorkflowOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+mkWorkflowOverlap a m = Counter $ do
   x <- m
-  pure $ WInternal' a (a <$ x) x
+  pure $ CounterInternal a (a <$ x) x
 
-mkWorkflow :: (Monad m, PostBuild t m) => a -> m (Event t (W' t m a)) -> W' t m a
-mkWorkflow a m = W' $ WInternal' a never <$> m
+mkWorkflow :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
+mkWorkflow a m = Counter $ CounterInternal a never <$> m
 
 
-counterW' :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> W' t m Int
-counterW' ev n i = mkWorkflow i $ do
+counterCounter :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Int -> Counter t m Int
+counterCounter ev n i = mkWorkflow i $ do
   br
   inc <- button $ T.pack $ show i <> "/" <> show n
   innerStateWitness
-  pure $ counterW' ev n ((i + 1) `mod` n) <$ leftmost [ev, inc]
+  pure $ counterCounter ev n ((i + 1) `mod` n) <$ leftmost [ev, inc]
 
 br :: DomBuilder t m => m ()
 br = el "br" blank
