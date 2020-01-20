@@ -60,7 +60,7 @@ workflowView w = do
 --------------------------------------------------------------------------------
 -- Wizard workflows
 --------------------------------------------------------------------------------
-newtype Wizard (t :: *) m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
+newtype Wizard t m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
 data WizardInternal t m a
   = WizardInternal_Terminal a
   | WizardInternal_Update (Event t a)
@@ -102,7 +102,7 @@ instance (Monad m, Reflex t) => Monad (Wizard t m) where
 --------------------------------------------------------------------------------
 -- Stack workflows
 --------------------------------------------------------------------------------
-newtype Stack (t :: *) m a = Stack { unStack :: m (StackInternal t m a) } deriving Functor
+newtype Stack t m a = Stack { unStack :: m (StackInternal t m a) } deriving Functor
 data StackInternal t m a
   = StackInternal_Now a
   | StackInternal_Later (Event t a)
@@ -138,7 +138,7 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) whe
 --------------------------------------------------------------------------------
 -- Counter workflows
 --------------------------------------------------------------------------------
-newtype Counter (t :: *) m a = Counter { unCounter :: m (CounterInternal t m a) } deriving Functor
+newtype Counter t m a = Counter { unCounter :: m (CounterInternal t m a) } deriving Functor
 data CounterInternal t m a = CounterInternal
   { _counter_initialValue :: a
   , _counter_updates :: Event t a
