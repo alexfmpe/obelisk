@@ -138,17 +138,13 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) whe
 --------------------------------------------------------------------------------
 -- Hierarchy workflows
 --------------------------------------------------------------------------------
-newtype Hierarchy t m a = Hierarchy { unHierarchy :: m (HierarchyInternal t m a) } deriving Functor
-data HierarchyInternal t m a = HierarchyInternal
-  { _hierarchy_initialValue :: a
-  , _hierarchy_updates :: Event t a
-  } deriving Functor
+newtype Hierarchy t m a = Hierarchy { unHierarchy :: m (a, Event t a) } deriving Functor
 
 layer :: (Monad m, PostBuild t m) => m (a, Event t a) -> Hierarchy t m a
-layer m = Hierarchy $ uncurry HierarchyInternal <$> m
+layer = Hierarchy
 
 runHierarchy :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (a, Event t a)
-runHierarchy w = ffor (unHierarchy w) $ \(HierarchyInternal a ev) -> (a, ev)
+runHierarchy = unHierarchy
 
 hierarchyView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Hierarchy t m a -> m (Event t a)
 hierarchyView c = do
@@ -160,10 +156,10 @@ hierarchyHold :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hi
 hierarchyHold = uncurry holdDyn <=< runHierarchy
 
 instance (Reflex t, Functor m, PostBuild t m) => Extend (Hierarchy t m) where
-  duplicated (Hierarchy w) = Hierarchy $ (fmap . fmap) pure w
+  duplicated = fmap pure
 
 instance (PostBuild t m) => Applicative (Hierarchy t m) where
-  pure a = Hierarchy $ pure $ HierarchyInternal a never
+  pure a = Hierarchy $ pure (a, never)
   (<*>) = undefined --ap --(<.>)
 
 instance (Reflex t, Functor m) => Apply (Hierarchy t m) where
@@ -172,9 +168,9 @@ instance (Reflex t, Functor m) => Apply (Hierarchy t m) where
 instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (Hierarchy t m) where
   join ww = Hierarchy $ do
     wint <- unHierarchy ww
-    (m0, mEv) <- runWithReplace (runHierarchy $ _hierarchy_initialValue wint) (fmap runHierarchy $ _hierarchy_updates wint)
+    (m0, mEv) <- runWithReplace (runHierarchy $ fst wint) (fmap runHierarchy $ snd wint)
     updates <- switchHold (snd m0) $ fmap snd mEv
-    pure $ HierarchyInternal (fst m0) (leftmost [fmap fst mEv, updates])
+    pure (fst m0, leftmost [fmap fst mEv, updates])
 
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Hierarchy t m) where
   (>>=) = (>>-)
