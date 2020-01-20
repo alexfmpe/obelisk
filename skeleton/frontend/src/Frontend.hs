@@ -43,7 +43,7 @@ import Reflex.Network
 import Common.Route
 
 --------------------------------------------------------------------------------
--- Workflow monad
+-- Wizard workflows
 --------------------------------------------------------------------------------
 newtype Wizard (t :: *) m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
 data WizardInternal t m a
@@ -84,6 +84,9 @@ instance (Monad m, Reflex t) => Bind (Wizard t m) where
 instance (Monad m, Reflex t) => Monad (Wizard t m) where
   (>>=) = (>>-)
 
+--------------------------------------------------------------------------------
+-- Stack workflows
+--------------------------------------------------------------------------------
 newtype Stack (t :: *) m a = Stack { unStack :: m (StackInternal t m a) } deriving Functor
 data StackInternal t m a
   = StackInternal_Now a
@@ -118,10 +121,9 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) whe
   (>>=) = (>>-)
 
 
-
-
-
-
+--------------------------------------------------------------------------------
+-- Counter workflows
+--------------------------------------------------------------------------------
 newtype Counter (t :: *) m a = Counter { unCounter :: m (CounterInternal t m a) } deriving Functor
 data CounterInternal t m a = CounterInternal
   { _counter_initialValue :: a
@@ -166,8 +168,9 @@ instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, Monad
   (>>=) = (>>-)
 
 
-
-
+--------------------------------------------------------------------------------
+-- Examples
+--------------------------------------------------------------------------------
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
@@ -221,6 +224,10 @@ frontend = Frontend
         pure ()
   }
 
+
+--------------------------------------------------------------------------------
+-- Utils
+--------------------------------------------------------------------------------
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show
 
@@ -257,6 +264,9 @@ day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y 
 br :: DomBuilder t m => m ()
 br = el "br" blank
 
+--------------------------------------------------------------------------------
+-- Workflow
+--------------------------------------------------------------------------------
 -- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
 runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
 runWorkflow w0 = mdo
