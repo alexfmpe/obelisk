@@ -240,10 +240,13 @@ frontend = Frontend
   , _frontend_body = do
       let
         section name w = do
-          text $ name <> " workflows"
+          el "h3" $ text $ name <> " workflows"
+          w
+
+        example name w = do
+          el "strong" $ text name
           br
           w
-          br
           br
           br
 
@@ -264,30 +267,32 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
-      section "Wizard" $
-        justShow <=< runWizard $ choices $ wizard . choice
+      section "Wizard" $ do
+        example "Choices" $ do
+          justShow <=< runWizard $ choices $ wizard . choice
 
       section "Stack" $
-        justShow <=< runStack $ choices $ stack . choice
+        example "Choices" $ do
+          justShow <=< runStack $ choices $ stack . choice
 
-      section "Counter" $ mdo
-        display <=< counterHold $ choices $ replicator "_" 1 . choice
+      section "Counter" $ do
+        example "Choices: replicator" $ do
+          display <=< counterHold $ choices $ replicator "_" 1 . choice
 
-        br
-        br
-        ymd <- counterHold $ do
-          y <- year clk 2000
-          m <- month clk January
-          d <- day clk y m 27
-          pure (y,m,d)
-        dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
-        br
-        display =<< count @_ @_ @Int (updated ymd)
-        clk <- if True
-          then pure never
-          else do
-          text " replacements"
+        example "Calendar" $ mdo
+          ymd <- counterHold $ do
+            y <- year clk 2000
+            m <- month clk January
+            d <- day clk y m 27
+            pure (y,m,d)
+          dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
           br
-          button "trigger all simultaneously"
-        pure ()
+          display =<< count @_ @_ @Int (updated ymd)
+          clk <- if True
+            then pure never
+            else do
+            text " replacements"
+            br
+            button "trigger all simultaneously"
+          pure ()
   }
