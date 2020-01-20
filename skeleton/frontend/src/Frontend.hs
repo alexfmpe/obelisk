@@ -19,7 +19,7 @@ module Frontend where
 
 import Control.Applicative (liftA2)
 import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
-import Control.Monad (ap, when, (<=<))
+import Control.Monad (ap, replicateM, when, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
@@ -186,6 +186,11 @@ counterOverlap a m = Counter $ do
   x <- m
   pure $ CounterInternal a (a <$ x) x
 
+replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Counter t m a
+replicator a n w = counter a $ elAttr "div" ("style" =: "display:flex") $ do
+  evs <- replicateM n w
+  pure $ ffor (leftmost evs) $ \x -> replicator x (n + 1) w
+
 digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
 digit succ' ev d = counter d $ do
   inc <- button $ tshow d
@@ -231,11 +236,11 @@ instance Monad m => Apply (RoutedT t r m) where
 
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
-  { _frontend_head = el "title" $ text "Obelisk Minimal Example"
+  { _frontend_head = el "title" $ text "Workflow examples"
   , _frontend_body = do
       let
         section name w = do
-          text $ name <> " workflow"
+          text $ name <> " workflows"
           br
           w
           br
@@ -246,7 +251,7 @@ frontend = Frontend
 
         btn x = (x <$) <$> button x
 
-        choice x = do
+        choice x = elAttr "div" ("style" =: "display:flex; margin-right: 15px") $ do
           a <- btn $ x <> ".A"
           b <- btn $ x <> ".B"
           br
@@ -266,6 +271,10 @@ frontend = Frontend
         justShow <=< runStack $ choices $ stack . choice
 
       section "Counter" $ mdo
+        display <=< counterHold $ choices $ replicator "_" 1 . choice
+
+        br
+        br
         ymd <- counterHold $ do
           y <- year clk 2000
           m <- month clk January
