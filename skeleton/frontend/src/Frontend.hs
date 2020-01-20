@@ -17,28 +17,22 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Applicative (liftA2)
 import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
 import Control.Monad (ap, replicateM, when, (<=<))
 import Control.Monad.Fix
-import Control.Monad.Free
-import Control.Monad.Free.Church
 import Data.Align
-import Data.Functor
+import Data.Functor (void)
 import Data.Functor.Alt
 import Data.Functor.Bind
-import Data.Functor.Compose
 import Data.Functor.Extend
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
 import Data.These
-import Data.Tuple (swap)
 import qualified Data.Text as T
 import Obelisk.Frontend
 import Obelisk.Route
 import Obelisk.Route.Frontend
 import Reflex.Dom.Core hiding (wrap, workflow, workflowView)
-import Reflex.Network
 
 import Common.Route
 
@@ -53,7 +47,7 @@ data WizardInternal t m a
   deriving Functor
 makePrisms ''WizardInternal
 
-step :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
+step :: Functor m => m (Event t a) -> Wizard t m a
 step = Wizard . fmap WizardInternal_Update
 
 runWizard :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Wizard t m a -> m (Event t a)
@@ -244,12 +238,12 @@ frontend = Frontend
       let
         section name w = do
           el "h3" $ text $ name <> " workflows"
-          w
+          void w
 
         example name w = do
           el "strong" $ text name
           br
-          w
+          void w
           br
           br
 
