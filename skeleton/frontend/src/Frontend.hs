@@ -142,18 +142,13 @@ newtype Hierarchy t m a = Hierarchy { unHierarchy :: m (HierarchyInternal t m a)
 data HierarchyInternal t m a = HierarchyInternal
   { _hierarchy_initialValue :: a
   , _hierarchy_updates :: Event t a
-  , _hierarchy_replacements :: Event t (Hierarchy t m a)
   } deriving Functor
 
-hierarchy :: (Monad m, PostBuild t m) => a -> m (Event t (Hierarchy t m a)) -> Hierarchy t m a
-hierarchy a m = Hierarchy $ HierarchyInternal a never <$> m
+layer :: (Monad m, PostBuild t m) => m (a, Event t a) -> Hierarchy t m a
+layer m = Hierarchy $ uncurry HierarchyInternal <$> m
 
 runHierarchy :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (a, Event t a)
-runHierarchy w = mdo
-  (wint0, wintEv) <- runWithReplace (unHierarchy w) (fmap unHierarchy replacements)
-  replacements <- switchHold (_hierarchy_replacements wint0) (_hierarchy_replacements <$> wintEv)
-  updates <- switchHold (_hierarchy_updates wint0) (_hierarchy_updates <$> wintEv)
-  pure (_hierarchy_initialValue wint0, leftmost [_hierarchy_initialValue <$> wintEv, updates `difference` replacements])
+runHierarchy w = ffor (unHierarchy w) $ \(HierarchyInternal a ev) -> (a, ev)
 
 hierarchyView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Hierarchy t m a -> m (Event t a)
 hierarchyView c = do
@@ -168,7 +163,7 @@ instance (Reflex t, Functor m, PostBuild t m) => Extend (Hierarchy t m) where
   duplicated (Hierarchy w) = Hierarchy $ (fmap . fmap) pure w
 
 instance (PostBuild t m) => Applicative (Hierarchy t m) where
-  pure a = Hierarchy $ pure $ HierarchyInternal a never never
+  pure a = Hierarchy $ pure $ HierarchyInternal a never
   (<*>) = undefined --ap --(<.>)
 
 instance (Reflex t, Functor m) => Apply (Hierarchy t m) where
@@ -179,7 +174,7 @@ instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuil
     wint <- unHierarchy ww
     (m0, mEv) <- runWithReplace (runHierarchy $ _hierarchy_initialValue wint) (fmap runHierarchy $ _hierarchy_updates wint)
     updates <- switchHold (snd m0) $ fmap snd mEv
-    pure $ HierarchyInternal (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _hierarchy_replacements wint)
+    pure $ HierarchyInternal (fst m0) (leftmost [fmap fst mEv, updates])
 
 instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Hierarchy t m) where
   (>>=) = (>>-)
@@ -195,31 +190,25 @@ innerStateWitness = when False $ do
   c <- count =<< button "increment inner state"
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
--- for testing
-hierarchyOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Hierarchy t m a)) -> Hierarchy t m a
-hierarchyOverlap a m = Hierarchy $ do
-  x <- m
-  pure $ HierarchyInternal a (a <$ x) x
-
-replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Hierarchy t m a
-replicator a n w = hierarchy a $ elAttr "div" ("style" =: "display:flex") $ do
+replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Workflow t m a
+replicator a n w = Workflow $ elAttr "div" ("style" =: "display:flex") $ do
   evs <- replicateM n w
-  pure $ ffor (leftmost evs) $ \x -> replicator x (n + 1) w
+  pure $ (a, ffor (leftmost evs) $ \x -> replicator x (n + 1) w)
 
-digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Hierarchy t m a
-digit succ' ev d = hierarchy d $ do
+digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Workflow t m a
+digit succ' ev d = Workflow $ do
   inc <- button $ tshow d
   innerStateWitness
   br
-  pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
+  pure $ (d, digit succ' ev (succ' d) <$ leftmost [ev, inc])
 
-year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Hierarchy t m Int
+year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Workflow t m Int
 year = digit succ
 
-month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Hierarchy t m Month
+month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Workflow t m Month
 month = digit $ \m -> toEnum $ succ (fromEnum m) `mod` 12
 
-day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Hierarchy t m Int
+day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Workflow t m Int
 day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y m
 
 br :: DomBuilder t m => m ()
@@ -274,13 +263,13 @@ frontend = Frontend
 
       section "Hierarchy" $ do
         example "Choices: replicator" $ do
-          display <=< hierarchyHold $ choices $ replicator "_" 1 . choice
+          display <=< hierarchyHold $ choices $ layer . runWorkflow . replicator "_" 1 . choice
 
         example "Calendar" $ mdo
           ymd <- hierarchyHold $ do
-            y <- year clk 2000
-            m <- month clk January
-            d <- day clk y m 27
+            y <- layer $ runWorkflow $ year clk 2000
+            m <- layer $ runWorkflow $ month clk January
+            d <- layer $ runWorkflow $ day clk y m 27
             pure (y,m,d)
           dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
           br
