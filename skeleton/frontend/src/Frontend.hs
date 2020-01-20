@@ -53,8 +53,8 @@ data WizardInternal t m a
   deriving Functor
 makePrisms ''WizardInternal
 
-wizard :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
-wizard = Wizard . fmap WizardInternal_Update
+step :: (Reflex t, Functor m) => m (Event t a) -> Wizard t m a
+step = Wizard . fmap WizardInternal_Update
 
 runWizard :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Wizard t m a -> m (Event t a)
 runWizard w = mdo
@@ -94,8 +94,8 @@ data StackInternal t m a
   deriving Functor
 makePrisms ''StackInternal
 
-stack :: Functor m => m (Event t a) -> Stack t m a
-stack = Stack . fmap StackInternal_Later
+frame :: Functor m => m (Event t a) -> Stack t m a
+frame = Stack . fmap StackInternal_Later
 
 runStack :: PostBuild t m => Stack t m a -> m (Event t a)
 runStack w = unStack w >>= \case
@@ -110,7 +110,7 @@ instance (Applicative m, Reflex t) => Applicative (Stack t m) where
   (<*>) = (<.>)
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
-  join mm = stack $ do
+  join mm = frame $ do
     mEv <- runStack mm
     ((), ev) <- runWithReplace blank $ unStack <$> mEv
     let now = fmapMaybe (^? _StackInternal_Now) ev
@@ -272,11 +272,11 @@ frontend = Frontend
 
       section "Wizard" $ do
         example "Choices" $ do
-          justShow <=< runWizard $ choices $ wizard . choice
+          justShow <=< runWizard $ choices $ step . choice
 
       section "Stack" $
         example "Choices" $ do
-          justShow <=< runStack $ choices $ stack . choice
+          justShow <=< runStack $ choices $ frame . choice
 
       section "Counter" $ do
         example "Choices: replicator" $ do
