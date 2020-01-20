@@ -17,10 +17,11 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), bimap, makePrisms, preview, set, (^?), _Left, _Right)
-import Control.Monad (ap, replicateM, when, (<=<))
+import Control.Lens (FunctorWithIndex(..), makePrisms, preview)
+import Control.Monad (ap, replicateM, when, (<=<), (>=>))
 import Control.Monad.Fix
 import Data.Align
+import Data.Bifunctor (first)
 import Data.Functor (void)
 import Data.Functor.Alt
 import Data.Functor.Bind
@@ -102,75 +103,39 @@ instance (Monad m, Reflex t) => Monad (Wizard t m) where
 --------------------------------------------------------------------------------
 -- Stack workflows
 --------------------------------------------------------------------------------
-newtype Stack t m a = Stack { unStack :: m (Either a (Event t a)) }
+newtype Stack t m a = Stack { unStack :: m (Maybe a, Event t a) } deriving Functor
 
-instance (Functor m, Reflex t) => Functor (Stack t m) where
-  fmap f (Stack w) = Stack $ ffor w $ bimap f (fmap f)
+frame :: m (Maybe a, Event t a) -> Stack t m a
+frame = Stack
 
-frame :: Functor m => m (Event t a) -> Stack t m a
-frame = Stack . fmap Right
-
-runStack :: PostBuild t m => Stack t m a -> m (Event t a)
-runStack w = unStack w >>= \case
-  Left a -> (a <$) <$> getPostBuild
-  Right ev -> pure ev
+stackView :: PostBuild t m => Stack t m a -> m (Event t a)
+stackView = unStack >=> \case
+  (Nothing, ev) -> pure ev
+  (Just a, ev) -> do
+    pb <- getPostBuild
+    pure $ leftmost [a <$ pb, ev]
 
 instance (Functor m, Reflex t) => Apply (Stack t m) where
   (<.>) = undefined
 
 instance (Applicative m, Reflex t) => Applicative (Stack t m) where
-  pure = Stack . pure . Left
+  pure = Stack . pure . (, never) . Just
   (<*>) = (<.>)
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
-  join mm = frame $ do
-    mEv <- runStack mm
-    ((), ev) <- runWithReplace blank $ unStack <$> mEv
-    let now = fmapMaybe (^? _Left) ev
-    later <- switchHold never $ fmapMaybe (^? _Right) ev
-    pure $ leftmost [now, later]
+  join ss = frame $ do
+    (ms0, sEv) <- unStack ss
+    case ms0 of
+      Nothing -> do
+        ((), ev) <- runWithReplace blank $ unStack <$> sEv
+        e <- switchHold never $ fmap snd ev
+        pure (Nothing, leftmost [fmapMaybe fst ev, e])
+      Just s0 -> do
+        ((a0,ev0), ev) <- runWithReplace (unStack s0) $ unStack <$> sEv
+        e <- switchHold never $ fmap snd ev
+        pure (a0, leftmost [ev0, fmapMaybe fst ev, e])
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) where
-  (>>=) = (>>-)
-
---------------------------------------------------------------------------------
--- Hierarchy workflows
---------------------------------------------------------------------------------
-newtype Hierarchy t m a = Hierarchy { unHierarchy :: m (a, Event t a) } deriving Functor
-
-layer :: (Monad m, PostBuild t m) => m (a, Event t a) -> Hierarchy t m a
-layer = Hierarchy
-
-runHierarchy :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (a, Event t a)
-runHierarchy = unHierarchy
-
-hierarchyView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Hierarchy t m a -> m (Event t a)
-hierarchyView c = do
-  postBuildEv <- getPostBuild
-  (initialValue, replaceEv) <- runHierarchy c
-  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
-
-hierarchyHold :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (Dynamic t a)
-hierarchyHold = uncurry holdDyn <=< runHierarchy
-
-instance (Reflex t, Functor m, PostBuild t m) => Extend (Hierarchy t m) where
-  duplicated = fmap pure
-
-instance (PostBuild t m) => Applicative (Hierarchy t m) where
-  pure a = Hierarchy $ pure (a, never)
-  (<*>) = undefined --ap --(<.>)
-
-instance (Reflex t, Functor m) => Apply (Hierarchy t m) where
-  (<.>) = undefined
-
-instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (Hierarchy t m) where
-  join ww = Hierarchy $ do
-    wint <- unHierarchy ww
-    (m0, mEv) <- runWithReplace (runHierarchy $ fst wint) (fmap runHierarchy $ snd wint)
-    updates <- switchHold (snd m0) $ fmap snd mEv
-    pure (fst m0, leftmost [fmap fst mEv, updates])
-
-instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Hierarchy t m) where
   (>>=) = (>>-)
 
 --------------------------------------------------------------------------------
@@ -230,7 +195,8 @@ frontend = Frontend
           br
           br
 
-        justShow = display <=< holdDyn Nothing . fmap Just
+        justHold x = holdDyn x . fmap Just
+        justShow = display <=< justHold Nothing
 
         btn x = (x <$) <$> button x
 
@@ -247,27 +213,28 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
+        frameFromWorkflow = frame . fmap (first Just) . runWorkflow
+
       section "Wizard" $ do
         example "Choices" $ do
           justShow <=< runWizard $ choices $ step . choice
 
-      section "Stack" $
-        example "Choices" $ do
-          justShow <=< runStack $ choices $ frame . choice
+      section "Stack" $ do
+        example "Choices" $
+          justShow <=< stackView $ choices $ frame . fmap (Nothing,) . choice
 
-      section "Hierarchy" $ do
         example "Choices: replicator" $ do
-          display <=< hierarchyHold $ choices $ layer . runWorkflow . replicator "_" 1 . choice
+          justShow <=< stackView $ choices $ frameFromWorkflow . replicator "_" 1 . choice
 
         example "Calendar" $ mdo
-          ymd <- hierarchyHold $ do
-            y <- layer $ runWorkflow $ year clk 2000
-            m <- layer $ runWorkflow $ month clk January
-            d <- layer $ runWorkflow $ day clk y m 27
+          ymd <- stackView $ do
+            y <- frameFromWorkflow $ year clk 2000
+            m <- frameFromWorkflow $ month clk January
+            d <- frameFromWorkflow $ day clk y m 27
             pure (y,m,d)
-          dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
+          justShow $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
           br
-          display =<< count @_ @_ @Int (updated ymd)
+          display =<< count @_ @_ @Int ymd
           clk <- if True
             then pure never
             else do
