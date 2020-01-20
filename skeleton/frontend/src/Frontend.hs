@@ -184,37 +184,27 @@ frontend = Frontend
           br
           pure $ leftmost [a,b]
 
+        choices mkWorkflow = do
+          x0 <- mkWorkflow "_"
+          x1 <- mkWorkflow x0
+          x2 <- mkWorkflow x1
+          x3 <- mkWorkflow x2
+          pure x3
+
       clk <- button "replace all"
 
       br
       br
       text "Workflows - wizard"
       br
-      do
-        let step = wizard . choice
-
-        justShow <=< runWizard $ do
-          x0 <- step "_"
-          x0' <- pure x0
-          x1 <- step x0'
-          x2 <- step x1
-          x3 <- step x2
-          pure x3
+      justShow <=< runWizard $ choices $ wizard . choice
       br
       br
       br
 
       text "Workflows - stack"
       br
-      do
-        let layer = stack . choice
-        justShow <=< runStack $ do
-          x0 <- layer "_"
-          x0' <- pure x0
-          x1 <- layer x0'
-          x2 <- layer x1
-          x3 <- layer x2
-          pure x3
+      justShow <=< runStack $ choices $ stack . choice
       br
       br
       br
