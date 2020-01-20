@@ -179,10 +179,6 @@ frontend = Frontend
   { _frontend_head = el "title" $ text "Workflow examples"
   , _frontend_body = do
       let
-        section name w = do
-          el "h3" $ text $ name <> " workflows"
-          void w
-
         example name w = do
           el "strong" $ text name
           br
@@ -213,30 +209,28 @@ frontend = Frontend
 
         frameFromWorkflow = frame . fmap (first Just) . runWorkflow
 
-      section "Wizard" $ do
-        example "Choices" $ do
-          justShow <=< runWizard $ choices $ step . choice
+      example "Choices: wizard" $ do
+        justShow <=< runWizard $ choices $ step . choice
 
-      section "Stack" $ do
-        example "Choices" $
-          justShow <=< stackView $ choices $ frame . fmap (Nothing,) . choice
-        example "Choices with initial value" $
-          justShow <=< stackView $ choices $ frame . fmap (Just "_",) . choiceFade
+      example "Choices: stack" $
+        justShow <=< stackView $ choices $ frame . fmap (Nothing,) . choice
+      example "Choices: stack with initial values" $
+        justShow <=< stackView $ choices $ frame . fmap (Just "_",) . choiceFade
 
-        example "Calendar" $ mdo
-          ymd <- stackView $ do
-            y <- frameFromWorkflow $ year clk 2000
-            m <- frameFromWorkflow $ month clk January
-            d <- frameFromWorkflow $ day clk y m 27
-            pure (y,m,d)
-          justShow $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
-          br
-          display =<< count @_ @_ @Int ymd
-          clk <- if True
-            then pure never
-            else do
-            text " replacements"
-            br
-            button "trigger all simultaneously"
-          pure ()
+      example "Stack of workflows" $ mdo
+         ymd <- stackView $ do
+           y <- frameFromWorkflow $ year clk 2000
+           m <- frameFromWorkflow $ month clk January
+           d <- frameFromWorkflow $ day clk y m 27
+           pure (y,m,d)
+         justShow $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
+         br
+         display =<< count @_ @_ @Int ymd
+         clk <- if True
+           then pure never
+           else do
+           text " replacements"
+           br
+           button "trigger all simultaneously"
+         pure ()
   }
