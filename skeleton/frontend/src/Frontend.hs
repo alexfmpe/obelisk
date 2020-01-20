@@ -283,10 +283,11 @@ frontend = Frontend
         dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
         br
         display =<< count @_ @_ @Int (updated ymd)
-        text " replacements"
-        br
         clk <- if True
           then pure never
-          else button "trigger all simultaneously"
+          else do
+          text " replacements"
+          br
+          button "trigger all simultaneously"
         pure ()
   }
