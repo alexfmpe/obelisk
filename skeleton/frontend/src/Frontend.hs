@@ -136,52 +136,52 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) whe
   (>>=) = (>>-)
 
 --------------------------------------------------------------------------------
--- Counter workflows
+-- Hierarchy workflows
 --------------------------------------------------------------------------------
-newtype Counter t m a = Counter { unCounter :: m (CounterInternal t m a) } deriving Functor
-data CounterInternal t m a = CounterInternal
-  { _counter_initialValue :: a
-  , _counter_updates :: Event t a
-  , _counter_replacements :: Event t (Counter t m a)
+newtype Hierarchy t m a = Hierarchy { unHierarchy :: m (HierarchyInternal t m a) } deriving Functor
+data HierarchyInternal t m a = HierarchyInternal
+  { _hierarchy_initialValue :: a
+  , _hierarchy_updates :: Event t a
+  , _hierarchy_replacements :: Event t (Hierarchy t m a)
   } deriving Functor
 
-counter :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-counter a m = Counter $ CounterInternal a never <$> m
+hierarchy :: (Monad m, PostBuild t m) => a -> m (Event t (Hierarchy t m a)) -> Hierarchy t m a
+hierarchy a m = Hierarchy $ HierarchyInternal a never <$> m
 
-runCounter :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Counter t m a -> m (a, Event t a)
-runCounter w = mdo
-  (wint0, wintEv) <- runWithReplace (unCounter w) (fmap unCounter replacements)
-  replacements <- switchHold (_counter_replacements wint0) (_counter_replacements <$> wintEv)
-  updates <- switchHold (_counter_updates wint0) (_counter_updates <$> wintEv)
-  pure (_counter_initialValue wint0, leftmost [_counter_initialValue <$> wintEv, updates `difference` replacements])
+runHierarchy :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (a, Event t a)
+runHierarchy w = mdo
+  (wint0, wintEv) <- runWithReplace (unHierarchy w) (fmap unHierarchy replacements)
+  replacements <- switchHold (_hierarchy_replacements wint0) (_hierarchy_replacements <$> wintEv)
+  updates <- switchHold (_hierarchy_updates wint0) (_hierarchy_updates <$> wintEv)
+  pure (_hierarchy_initialValue wint0, leftmost [_hierarchy_initialValue <$> wintEv, updates `difference` replacements])
 
-counterView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Counter t m a -> m (Event t a)
-counterView c = do
+hierarchyView :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Hierarchy t m a -> m (Event t a)
+hierarchyView c = do
   postBuildEv <- getPostBuild
-  (initialValue, replaceEv) <- runCounter c
+  (initialValue, replaceEv) <- runHierarchy c
   pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
 
-counterHold :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Counter t m a -> m (Dynamic t a)
-counterHold = uncurry holdDyn <=< runCounter
+hierarchyHold :: forall t m a. (Adjustable t m, MonadHold t m, MonadFix m) => Hierarchy t m a -> m (Dynamic t a)
+hierarchyHold = uncurry holdDyn <=< runHierarchy
 
-instance (Reflex t, Functor m, PostBuild t m) => Extend (Counter t m) where
-  duplicated (Counter w) = Counter $ (fmap . fmap) pure w
+instance (Reflex t, Functor m, PostBuild t m) => Extend (Hierarchy t m) where
+  duplicated (Hierarchy w) = Hierarchy $ (fmap . fmap) pure w
 
-instance (PostBuild t m) => Applicative (Counter t m) where
-  pure a = Counter $ pure $ CounterInternal a never never
+instance (PostBuild t m) => Applicative (Hierarchy t m) where
+  pure a = Hierarchy $ pure $ HierarchyInternal a never never
   (<*>) = undefined --ap --(<.>)
 
-instance (Reflex t, Functor m) => Apply (Counter t m) where
+instance (Reflex t, Functor m) => Apply (Hierarchy t m) where
   (<.>) = undefined
 
-instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (Counter t m) where
-  join ww = Counter $ do
-    wint <- unCounter ww
-    (m0, mEv) <- runWithReplace (runCounter $ _counter_initialValue wint) (fmap runCounter $ _counter_updates wint)
+instance (Reflex t, Apply m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Bind (Hierarchy t m) where
+  join ww = Hierarchy $ do
+    wint <- unHierarchy ww
+    (m0, mEv) <- runWithReplace (runHierarchy $ _hierarchy_initialValue wint) (fmap runHierarchy $ _hierarchy_updates wint)
     updates <- switchHold (snd m0) $ fmap snd mEv
-    pure $ CounterInternal (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _counter_replacements wint)
+    pure $ HierarchyInternal (fst m0) (leftmost [fmap fst mEv, updates]) (fmap join $ _hierarchy_replacements wint)
 
-instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Counter t m) where
+instance (Reflex t, Apply m, Applicative m, Adjustable t m, MonadHold t m, MonadFix m, PostBuild t m) => Monad (Hierarchy t m) where
   (>>=) = (>>-)
 
 --------------------------------------------------------------------------------
@@ -196,30 +196,30 @@ innerStateWitness = when False $ do
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
 -- for testing
-counterOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
-counterOverlap a m = Counter $ do
+hierarchyOverlap :: (Monad m, PostBuild t m) => a -> m (Event t (Hierarchy t m a)) -> Hierarchy t m a
+hierarchyOverlap a m = Hierarchy $ do
   x <- m
-  pure $ CounterInternal a (a <$ x) x
+  pure $ HierarchyInternal a (a <$ x) x
 
-replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Counter t m a
-replicator a n w = counter a $ elAttr "div" ("style" =: "display:flex") $ do
+replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Hierarchy t m a
+replicator a n w = hierarchy a $ elAttr "div" ("style" =: "display:flex") $ do
   evs <- replicateM n w
   pure $ ffor (leftmost evs) $ \x -> replicator x (n + 1) w
 
-digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
-digit succ' ev d = counter d $ do
+digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Hierarchy t m a
+digit succ' ev d = hierarchy d $ do
   inc <- button $ tshow d
   innerStateWitness
   br
   pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
 
-year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
+year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Hierarchy t m Int
 year = digit succ
 
-month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
+month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Hierarchy t m Month
 month = digit $ \m -> toEnum $ succ (fromEnum m) `mod` 12
 
-day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
+day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Hierarchy t m Int
 day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y m
 
 br :: DomBuilder t m => m ()
@@ -272,12 +272,12 @@ frontend = Frontend
         example "Choices" $ do
           justShow <=< runStack $ choices $ frame . choice
 
-      section "Counter" $ do
+      section "Hierarchy" $ do
         example "Choices: replicator" $ do
-          display <=< counterHold $ choices $ replicator "_" 1 . choice
+          display <=< hierarchyHold $ choices $ replicator "_" 1 . choice
 
         example "Calendar" $ mdo
-          ymd <- counterHold $ do
+          ymd <- hierarchyHold $ do
             y <- year clk 2000
             m <- month clk January
             d <- day clk y m 27
