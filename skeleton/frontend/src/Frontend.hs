@@ -37,6 +37,27 @@ import Reflex.Dom.Core hiding (wrap, workflow, workflowView)
 import Common.Route
 
 --------------------------------------------------------------------------------
+-- Workflow
+--------------------------------------------------------------------------------
+-- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
+runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
+runWorkflow w0 = mdo
+  ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
+  eReplace <- switchHold e0 $ fmap snd eResult
+  return (a, fmap fst eResult)
+
+-- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
+workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
+workflow = uncurry holdDyn <=< runWorkflow
+
+-- | Similar to 'workflow', but only returns the 'Event'.
+workflowView :: (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Workflow t m a -> m (Event t a)
+workflowView w = do
+  postBuildEv <- getPostBuild
+  (initialValue, replaceEv) <- runWorkflow w
+  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
+
+--------------------------------------------------------------------------------
 -- Wizard workflows
 --------------------------------------------------------------------------------
 newtype Wizard (t :: *) m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
@@ -203,27 +224,6 @@ day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y 
 
 br :: DomBuilder t m => m ()
 br = el "br" blank
-
---------------------------------------------------------------------------------
--- Workflow
---------------------------------------------------------------------------------
--- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
-runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
-runWorkflow w0 = mdo
-  ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
-  eReplace <- switchHold e0 $ fmap snd eResult
-  return (a, fmap fst eResult)
-
--- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
-workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
-workflow = uncurry holdDyn <=< runWorkflow
-
--- | Similar to 'workflow', but only returns the 'Event'.
-workflowView :: (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Workflow t m a -> m (Event t a)
-workflowView w = do
-  postBuildEv <- getPostBuild
-  (initialValue, replaceEv) <- runWorkflow w
-  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
 
 --------------------------------------------------------------------------------
 -- Examples
