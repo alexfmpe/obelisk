@@ -182,65 +182,65 @@ frontend = Frontend
       br
       text "Workflows - wizard"
       br
-
-      justShow <=< runWizard $ do
-        x <- prompt $ do
-          text $ tshow 0
-          innerStateWitness
-          ev <- button "Next"
-          br
-          pure $ 1 <$ ev
-        y <- prompt $ do
-          text $ tshow x
-          innerStateWitness
-          ev <- button "Next"
-          br
-          pure $ 2 <$ ev
-        prompt $ do
-          text $ tshow y
-          innerStateWitness
-          ev <- button "Next"
-          br
-          pure $ 3 <$ ev
---        prompt $ do
---          pure never
---        pure z
-
-      br
-
-      br
-      br
-      text "Workflows - stack"
-      let btn x = (x <$) <$> button x
-          layer x = stack $ do
-            a <- btn $ x <> ".A"
-            b <- btn $ x <> ".B"
+      do
+        justShow <=< runWizard $ do
+          x <- prompt $ do
+            text $ tshow 0
+            innerStateWitness
+            ev <- button "Next"
             br
-            pure $ leftmost [a,b]
-      br
-      justShow <=< runStack $ do
-        x0 <- layer "_"
-        x0' <- pure x0
-        x1 <- layer x0'
-        x2 <- layer x1
-        x3 <- layer x2
-        pure x3
+            pure $ 1 <$ ev
+          y <- prompt $ do
+            text $ tshow x
+            innerStateWitness
+            ev <- button "Next"
+            br
+            pure $ 2 <$ ev
+          prompt $ do
+            text $ tshow y
+            innerStateWitness
+            ev <- button "Next"
+            br
+            pure $ 3 <$ ev
+   --        prompt $ do
+   --          pure never
+   --        pure z
 
       br
+      br
+      br
+
+      text "Workflows - stack"
+      br
+      do
+        let btn x = (x <$) <$> button x
+            layer x = stack $ do
+              a <- btn $ x <> ".A"
+              b <- btn $ x <> ".B"
+              br
+              pure $ leftmost [a,b]
+        justShow <=< runStack $ do
+          x0 <- layer "_"
+          x0' <- pure x0
+          x1 <- layer x0'
+          x2 <- layer x1
+          x3 <- layer x2
+          pure x3
       br
       br
       br
       text "Workflows - counter"
-      ymd <- counterHold $ do
-        y <- year clk 2000
-        m <- month clk January
-        d <- day clk y m 27
-        pure (y,m,d)
       br
-      dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
-      br
-      display =<< count @_ @_ @Int (updated ymd)
-      text " replacements"
+      do
+        ymd <- counterHold $ do
+          y <- year clk 2000
+          m <- month clk January
+          d <- day clk y m 27
+          pure (y,m,d)
+        dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
+        br
+        display =<< count @_ @_ @Int (updated ymd)
+        text " replacements"
   }
 
 tshow :: Show a => a -> T.Text
@@ -262,9 +262,9 @@ counter a m = Counter $ CounterInternal a never <$> m
 
 digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
 digit succ' ev d = counter d $ do
-  br
   inc <- button $ tshow d
   innerStateWitness
+  br
   pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
 
 year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
