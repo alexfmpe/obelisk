@@ -225,8 +225,11 @@ workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (
 workflow = uncurry holdDyn <=< runWorkflow
 
 -- | Similar to 'workflow', but only returns the 'Event'.
-workflowView :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Event t a)
-workflowView = fmap snd . runWorkflow
+workflowView :: (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Workflow t m a -> m (Event t a)
+workflowView w = do
+  postBuildEv <- getPostBuild
+  (initialValue, replaceEv) <- runWorkflow w
+  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
 
 --------------------------------------------------------------------------------
 -- Examples
