@@ -59,7 +59,7 @@ workflowView w = do
   pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
 
 --------------------------------------------------------------------------------
--- Wizard workflows
+-- Wizard
 --------------------------------------------------------------------------------
 newtype Wizard t m a = Wizard { unWizard :: m (WizardInternal t m a) } deriving Functor
 data WizardInternal t m a
@@ -101,7 +101,7 @@ instance (Monad m, Reflex t) => Monad (Wizard t m) where
   (>>=) = (>>-)
 
 --------------------------------------------------------------------------------
--- Stack workflows
+-- Stack
 --------------------------------------------------------------------------------
 newtype Stack t m a = Stack { unStack :: m (Maybe a, Event t a) } deriving Functor
 
@@ -149,11 +149,6 @@ innerStateWitness = when False $ do
   c <- count =<< button "increment inner state"
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
-replicator :: (DomBuilder t m, PostBuild t m) => a -> Int -> m (Event t a) -> Workflow t m a
-replicator a n w = Workflow $ elAttr "div" ("style" =: "display:flex") $ do
-  evs <- replicateM n w
-  pure $ (a, ffor (leftmost evs) $ \x -> replicator x (n + 1) w)
-
 digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Workflow t m a
 digit succ' ev d = Workflow $ do
   inc <- button $ tshow d
@@ -200,14 +195,17 @@ frontend = Frontend
 
         btn x = (x <$) <$> button x
 
-        choice x = elAttr "div" ("style" =: "display:flex; margin-right: 15px") $ do
+        choice = choiceStyle $ const mempty
+        choiceFade = choiceStyle $ \x -> if x == "_" then "opacity:0.5;" else mempty
+
+        choiceStyle style x = elAttr "div" ("style" =: ("display:flex; margin-right: 15px;" <> style x)) $ do
           a <- btn $ x <> ".A"
           b <- btn $ x <> ".B"
           br
           pure $ leftmost [a,b]
 
         choices mkWorkflow = do
-          x0 <- mkWorkflow "_"
+          x0 <- mkWorkflow "0"
           x1 <- mkWorkflow x0
           x2 <- mkWorkflow x1
           x3 <- mkWorkflow x2
@@ -222,9 +220,8 @@ frontend = Frontend
       section "Stack" $ do
         example "Choices" $
           justShow <=< stackView $ choices $ frame . fmap (Nothing,) . choice
-
-        example "Choices: replicator" $ do
-          justShow <=< stackView $ choices $ frameFromWorkflow . replicator "_" 1 . choice
+        example "Choices with initial value" $
+          justShow <=< stackView $ choices $ frame . fmap (Just "_",) . choiceFade
 
         example "Calendar" $ mdo
           ymd <- stackView $ do
