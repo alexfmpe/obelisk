@@ -19,7 +19,7 @@ module Frontend where
 
 import Control.Applicative (liftA2)
 import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
-import Control.Monad (ap, (<=<))
+import Control.Monad (ap, when, (<=<))
 import Control.Monad.Fix
 import Control.Monad.Free
 import Control.Monad.Free.Church
@@ -247,7 +247,7 @@ tshow :: Show a => a -> T.Text
 tshow = T.pack . show
 
 innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
-innerStateWitness = do
+innerStateWitness = when False $ do
   c <- count =<< button "increment inner state"
   dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
 
