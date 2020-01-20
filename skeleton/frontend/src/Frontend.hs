@@ -198,17 +198,13 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
-      clk <- button "replace all"
-
-      br
-      br
       section "Wizard" $
         justShow <=< runWizard $ choices $ wizard . choice
 
       section "Stack" $
         justShow <=< runStack $ choices $ stack . choice
 
-      section "Counter" $ do
+      section "Counter" $ mdo
         ymd <- counterHold $ do
           y <- year clk 2000
           m <- month clk January
@@ -218,6 +214,11 @@ frontend = Frontend
         br
         display =<< count @_ @_ @Int (updated ymd)
         text " replacements"
+        br
+        clk <- if True
+          then pure never
+          else button "trigger all simultaneously"
+        pure ()
   }
 
 tshow :: Show a => a -> T.Text
