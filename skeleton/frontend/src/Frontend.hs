@@ -17,7 +17,7 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), makePrisms, preview, set, (^?), _Left, _Right)
+import Control.Lens (FunctorWithIndex(..), bimap, makePrisms, preview, set, (^?), _Left, _Right)
 import Control.Monad (ap, replicateM, when, (<=<))
 import Control.Monad.Fix
 import Data.Align
@@ -102,34 +102,32 @@ instance (Monad m, Reflex t) => Monad (Wizard t m) where
 --------------------------------------------------------------------------------
 -- Stack workflows
 --------------------------------------------------------------------------------
-newtype Stack t m a = Stack { unStack :: m (StackInternal t m a) } deriving Functor
-data StackInternal t m a
-  = StackInternal_Now a
-  | StackInternal_Later (Event t a)
-  deriving Functor
-makePrisms ''StackInternal
+newtype Stack t m a = Stack { unStack :: m (Either a (Event t a)) }
+
+instance (Functor m, Reflex t) => Functor (Stack t m) where
+  fmap f (Stack w) = Stack $ ffor w $ bimap f (fmap f)
 
 frame :: Functor m => m (Event t a) -> Stack t m a
-frame = Stack . fmap StackInternal_Later
+frame = Stack . fmap Right
 
 runStack :: PostBuild t m => Stack t m a -> m (Event t a)
 runStack w = unStack w >>= \case
-  StackInternal_Now a -> (a <$) <$> getPostBuild
-  StackInternal_Later ev -> pure ev
+  Left a -> (a <$) <$> getPostBuild
+  Right ev -> pure ev
 
 instance (Functor m, Reflex t) => Apply (Stack t m) where
   (<.>) = undefined
 
 instance (Applicative m, Reflex t) => Applicative (Stack t m) where
-  pure = Stack . pure . StackInternal_Now
+  pure = Stack . pure . Left
   (<*>) = (<.>)
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
   join mm = frame $ do
     mEv <- runStack mm
     ((), ev) <- runWithReplace blank $ unStack <$> mEv
-    let now = fmapMaybe (^? _StackInternal_Now) ev
-    later <- switchHold never $ fmapMaybe (^? _StackInternal_Later) ev
+    let now = fmapMaybe (^? _Left) ev
+    later <- switchHold never $ fmapMaybe (^? _Right) ev
     pure $ leftmost [now, later]
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) where
