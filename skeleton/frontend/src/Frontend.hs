@@ -173,7 +173,14 @@ frontend = Frontend
   { _frontend_head = el "title" $ text "Obelisk Minimal Example"
   , _frontend_body = do
       let
-        justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m, Show a) => Event t a -> m ()
+        section name w = do
+          text $ name <> " workflow"
+          br
+          w
+          br
+          br
+          br
+
         justShow = display <=< holdDyn Nothing . fmap Just
 
         btn x = (x <$) <$> button x
@@ -195,22 +202,13 @@ frontend = Frontend
 
       br
       br
-      text "Workflows - wizard"
-      br
-      justShow <=< runWizard $ choices $ wizard . choice
-      br
-      br
-      br
+      section "Wizard" $
+        justShow <=< runWizard $ choices $ wizard . choice
 
-      text "Workflows - stack"
-      br
-      justShow <=< runStack $ choices $ stack . choice
-      br
-      br
-      br
-      text "Workflows - counter"
-      br
-      do
+      section "Stack" $
+        justShow <=< runStack $ choices $ stack . choice
+
+      section "Counter" $ do
         ymd <- counterHold $ do
           y <- year clk 2000
           m <- month clk January
