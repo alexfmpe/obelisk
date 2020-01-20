@@ -174,7 +174,7 @@ frontend = Frontend
   , _frontend_body = do
       let
         justShow :: (DomBuilder t m, PostBuild t m, MonadHold t m, Show a) => Event t a -> m ()
-        justShow = display . fmap tshow <=< holdDyn Nothing . fmap Just
+        justShow = display <=< holdDyn Nothing . fmap Just
 
       clk <- button "replace all"
 
@@ -217,12 +217,6 @@ frontend = Frontend
             b <- btn $ x <> ".B"
             br
             pure $ leftmost [a,b]
-
-      br
-      br
-      justShow <=< runStack $ pure 4
-      br
-      justShow <=< runStack $ layer "_"
       br
       justShow <=< runStack $ do
         x0 <- layer "_"
