@@ -266,29 +266,21 @@ counterOverlap a m = Counter $ do
 counter :: (Monad m, PostBuild t m) => a -> m (Event t (Counter t m a)) -> Counter t m a
 counter a m = Counter $ CounterInternal a never <$> m
 
-year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
-year ev y = counter y $ do
-  let y' = toEnum $ succ (fromEnum y)
-  br
-  inc <- button $ tshow y
-  innerStateWitness
-  pure $ year ev y' <$ leftmost [ev, inc]
-
-month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
-month ev m = counter m $ do
-  let m' = toEnum $ succ (fromEnum m) `mod` 12
-  br
-  inc <- button $ tshow m
-  innerStateWitness
-  pure $ month ev m' <$ leftmost [ev, inc]
-
-day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
-day ev y m d = counter d $ do
-  let d' = toEnum $ succ $ toEnum d `mod` daysInMonth y m
+digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Counter t m a
+digit succ' ev d = counter d $ do
   br
   inc <- button $ tshow d
   innerStateWitness
-  pure $ day ev y m d' <$ leftmost [ev, inc]
+  pure $ digit succ' ev (succ' d) <$ leftmost [ev, inc]
+
+year :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Counter t m Int
+year = digit succ
+
+month :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Month -> Counter t m Month
+month = digit $ \m -> toEnum $ succ (fromEnum m) `mod` 12
+
+day :: (DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => Event t () -> Int -> Month -> Int -> Counter t m Int
+day ev y m = flip digit ev $ \d -> toEnum $ succ $ toEnum d `mod` daysInMonth y m
 
 br :: DomBuilder t m => m ()
 br = el "br" blank
