@@ -17,19 +17,15 @@
 {-# LANGUAGE TypeApplications #-}
 module Frontend where
 
-import Control.Lens (FunctorWithIndex(..), makePrisms, preview)
-import Control.Monad (ap, replicateM, when, (<=<), (>=>))
+import Control.Lens (makePrisms, preview)
+import Control.Monad (when, (<=<), (>=>))
 import Control.Monad.Fix
 import Control.Monad.Trans.Maybe
-import Data.Align
-import Data.Bifunctor (first)
 import Data.Functor (void)
 import Data.Functor.Alt
 import Data.Functor.Bind
-import Data.Functor.Extend
 import Data.Hourglass
 import Data.Maybe (fromMaybe)
-import Data.These
 import qualified Data.Text as T
 import Obelisk.Frontend
 import Obelisk.Route
