@@ -20,13 +20,12 @@ module Frontend where
 
 import Control.Lens (makePrisms, preview)
 import Control.Monad (ap, when, (<=<), (>=>))
-import Control.Monad.Fix
-import Control.Monad.Trans.Maybe
-import Data.Witherable
+import Control.Monad.Fix (MonadFix)
+import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
+import Data.Witherable (catMaybes)
 import Data.Functor (void)
-import Data.Functor.Alt
-import Data.Functor.Bind
-import Data.Hourglass
+import Data.Functor.Bind (Apply(..), Bind(..))
+import Data.Hourglass (Month(..), daysInMonth)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Obelisk.Frontend
