@@ -39,7 +39,7 @@ import Common.Route
 --------------------------------------------------------------------------------
 -- Workflow
 --------------------------------------------------------------------------------
--- | Runs a 'Workflow' and returns the initial value together with an 'Event' of the values produced by the whenever one 'Workflow' is replaced by another.
+-- | Runs a 'Workflow' and returns the initial value together with an 'Event' that fires whenever one 'Workflow' is replaced by another.
 runWorkflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (a, Event t a)
 runWorkflow w0 = mdo
   ((a, e0), eResult) <- runWithReplace (unWorkflow w0) (fmap unWorkflow eReplace)
@@ -50,7 +50,7 @@ runWorkflow w0 = mdo
 workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
 workflow = uncurry holdDyn <=< runWorkflow
 
--- | Similar to 'workflow', but only returns the 'Event'.
+-- | Similar to 'runWorkflow', but also puts the initial value in the 'Event'.
 workflowView :: (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Workflow t m a -> m (Event t a)
 workflowView w = do
   postBuildEv <- getPostBuild
@@ -142,7 +142,6 @@ innerStateWitness :: DomBuilder t m => m ()
 innerStateWitness = when False $ void $ inputElement $ def
   & inputElementConfig_initialValue .~ "some state"
 
-
 digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Workflow t m a
 digit succ' ev d = Workflow $ do
   inc <- button $ tshow d
@@ -200,28 +199,28 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
-        frameAwait :: (Functor m, Reflex t) => m (Event t a) -> Stack t m (Maybe a)
-        frameAwait = frame . fmap (\ev -> (Nothing, fmap Just ev))
+        frameIncremental :: (Functor m, Reflex t) => m (Event t a) -> Stack t m (Maybe a)
+        frameIncremental = frame . fmap (\ev -> (Nothing, fmap Just ev))
 
-      example "Choices: Wizard" $
+      example "Wizard" $
         justShow <=< runWizard $ choices $
           step . choice
 
-      example "Choices: Stack" $
+      example "Stack: fixed layers" $
         display <=< stackHold $ choices $
           frame . fmap ("_",) . choiceFade
 
-      example "Choices: MaybeT Stack" $
+      example "Stack: incremental layers via MaybeT" $
         display <=< stackHold $ runMaybeT $ choices $
-          MaybeT . frameAwait . choice
+          MaybeT . frameIncremental . choice
 
-      example "Wizard of MaybeT Stack" $ do
+      example "Wizard of incremental stacks" $ do
         justShow <=< runWizard $ do
-          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameAwait . choice
-          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameAwait . choice
+          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameIncremental . choice
+          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameIncremental . choice
           pure (x,y)
 
-      example "Stack of Workflow" $ mdo
+      example "Stack of workflows" $ mdo
          ymd <- stackHold $ do
            y <- frame . runWorkflow $ year clk 2000
            m <- frame . runWorkflow $ month clk January
