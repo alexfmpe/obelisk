@@ -20,6 +20,7 @@ module Frontend where
 import Control.Lens (FunctorWithIndex(..), makePrisms, preview)
 import Control.Monad (ap, replicateM, when, (<=<), (>=>))
 import Control.Monad.Fix
+import Control.Monad.Trans.Maybe
 import Data.Align
 import Data.Bifunctor (first)
 import Data.Functor (void)
@@ -103,37 +104,32 @@ instance (Monad m, Reflex t) => Monad (Wizard t m) where
 --------------------------------------------------------------------------------
 -- Stack
 --------------------------------------------------------------------------------
-newtype Stack t m a = Stack { unStack :: m (Maybe a, Event t a) } deriving Functor
+newtype Stack t m a = Stack { unStack :: m (a, Event t a) } deriving Functor
 
-frame :: m (Maybe a, Event t a) -> Stack t m a
+frame :: m (a, Event t a) -> Stack t m a
 frame = Stack
 
+stackHold :: MonadHold t m => Stack t m a -> m (Dynamic t a)
+stackHold = unStack >=> uncurry holdDyn
+
 stackView :: PostBuild t m => Stack t m a -> m (Event t a)
-stackView = unStack >=> \case
-  (Nothing, ev) -> pure ev
-  (Just a, ev) -> do
-    pb <- getPostBuild
-    pure $ leftmost [a <$ pb, ev]
+stackView = unStack >=> \(a, ev) -> do
+  pb <- getPostBuild
+  pure $ leftmost [a <$ pb, ev]
 
 instance (Functor m, Reflex t) => Apply (Stack t m) where
   (<.>) = undefined
 
 instance (Applicative m, Reflex t) => Applicative (Stack t m) where
-  pure = Stack . pure . (, never) . Just
+  pure = Stack . pure . (, never)
   (<*>) = (<.>)
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Bind (Stack t m) where
   join ss = frame $ do
-    (ms0, sEv) <- unStack ss
-    case ms0 of
-      Nothing -> do
-        ((), ev) <- runWithReplace blank $ unStack <$> sEv
-        e <- switchHold never $ fmap snd ev
-        pure (Nothing, leftmost [fmapMaybe fst ev, e])
-      Just s0 -> do
-        ((a0,ev0), ev) <- runWithReplace (unStack s0) $ unStack <$> sEv
-        e <- switchHold never $ fmap snd ev
-        pure (a0, leftmost [ev0, fmapMaybe fst ev, e])
+    (s0, sEv) <- unStack ss
+    ((a0,ev0), ev) <- runWithReplace (unStack s0) $ unStack <$> sEv
+    e <- switchHold never $ fmap snd ev
+    pure (a0, leftmost [ev0, fmap fst ev, e])
 
 instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) where
   (>>=) = (>>-)
@@ -186,8 +182,7 @@ frontend = Frontend
           br
           br
 
-        justHold x = holdDyn x . fmap Just
-        justShow = display <=< justHold Nothing
+        justShow = display <=< holdDyn Nothing . fmap Just
 
         btn x = (x <$) <$> button x
 
@@ -207,25 +202,27 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
-        frameFromWorkflow = frame . fmap (first Just) . runWorkflow
+      example "Choices: Wizard" $
+        justShow <=< runWizard $ choices $
+          step . choice
 
-      example "Choices: wizard" $ do
-        justShow <=< runWizard $ choices $ step . choice
+      example "Choices: Stack" $
+        display <=< stackHold $ choices $
+          frame . fmap ("_",) . choiceFade
 
-      example "Choices: stack" $
-        justShow <=< stackView $ choices $ frame . fmap (Nothing,) . choice
-      example "Choices: stack with initial values" $
-        justShow <=< stackView $ choices $ frame . fmap (Just "_",) . choiceFade
+      example "Choices: MaybeT Stack" $
+        display <=< stackHold $ runMaybeT $ choices $ \x ->
+          MaybeT $ frame $ ffor (choice x) $ \ev -> (Nothing, fmap Just ev)
 
       example "Stack of workflows" $ mdo
-         ymd <- stackView $ do
-           y <- frameFromWorkflow $ year clk 2000
-           m <- frameFromWorkflow $ month clk January
-           d <- frameFromWorkflow $ day clk y m 27
+         ymd <- stackHold $ do
+           y <- frame . runWorkflow $ year clk 2000
+           m <- frame . runWorkflow $ month clk January
+           d <- frame . runWorkflow $ day clk y m 27
            pure (y,m,d)
-         justShow $ ffor ymd $ \(y,m,d) -> T.intercalate "-" $ [tshow y, tshow m, tshow d]
+         dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" [tshow y, tshow m, tshow d]
          br
-         display =<< count @_ @_ @Int ymd
+         display =<< count @_ @_ @Int (updated ymd)
          clk <- if True
            then pure never
            else do
