@@ -18,7 +18,7 @@
 module Frontend where
 
 import Control.Lens (makePrisms, preview)
-import Control.Monad (when, (<=<), (>=>))
+import Control.Monad (ap, when, (<=<), (>=>))
 import Control.Monad.Fix
 import Control.Monad.Trans.Maybe
 import Data.Functor (void)
@@ -81,10 +81,10 @@ runWizard w = mdo
       terminal = fmapMaybe (preview _WizardInternal_Terminal) wintEv
   pure $ leftmost [terminal0, terminal]
 
-instance (Functor m, Reflex t) => Apply (Wizard t m) where
-  (<.>) = undefined
+instance (Monad m, Reflex t) => Apply (Wizard t m) where
+  (<.>) = ap
 
-instance (Applicative m, Reflex t) => Applicative (Wizard t m) where
+instance (Monad m, Reflex t) => Applicative (Wizard t m) where
   pure = Wizard . pure . WizardInternal_Terminal
   (<*>) = (<.>)
 
@@ -113,10 +113,10 @@ stackView = unStack >=> \(a, ev) -> do
   pb <- getPostBuild
   pure $ leftmost [a <$ pb, ev]
 
-instance (Functor m, Reflex t) => Apply (Stack t m) where
-  (<.>) = undefined
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Apply (Stack t m) where
+  (<.>) = ap
 
-instance (Applicative m, Reflex t) => Applicative (Stack t m) where
+instance (Adjustable t m, MonadHold t m, PostBuild t m) => Applicative (Stack t m) where
   pure = Stack . pure . (, never)
   (<*>) = (<.>)
 
