@@ -138,10 +138,10 @@ instance (Adjustable t m, MonadHold t m, PostBuild t m) => Monad (Stack t m) whe
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show
 
-innerStateWitness :: (DomBuilder t m, MonadHold t m, MonadFix m, PostBuild t m) => m ()
-innerStateWitness = when False $ do
-  c <- count =<< button "increment inner state"
-  dyn_ $ ffor c $ \(j :: Int) -> text $ tshow j
+innerStateWitness :: DomBuilder t m => m ()
+innerStateWitness = when False $ void $ inputElement $ def
+  & inputElementConfig_initialValue .~ "some state"
+
 
 digit :: (Show a, DomBuilder t m, MonadFix m, MonadHold t m, PostBuild t m) => (a -> a) -> Event t () -> a -> Workflow t m a
 digit succ' ev d = Workflow $ do
