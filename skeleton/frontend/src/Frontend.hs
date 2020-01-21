@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RankNTypes #-}
@@ -21,6 +22,7 @@ import Control.Lens (makePrisms, preview)
 import Control.Monad (ap, when, (<=<), (>=>))
 import Control.Monad.Fix
 import Control.Monad.Trans.Maybe
+import Data.Witherable
 import Data.Functor (void)
 import Data.Functor.Alt
 import Data.Functor.Bind
@@ -198,6 +200,9 @@ frontend = Frontend
           x3 <- mkWorkflow x2
           pure x3
 
+        frameAwait :: (Functor m, Reflex t) => m (Event t a) -> Stack t m (Maybe a)
+        frameAwait = frame . fmap (\ev -> (Nothing, fmap Just ev))
+
       example "Choices: Wizard" $
         justShow <=< runWizard $ choices $
           step . choice
@@ -207,10 +212,16 @@ frontend = Frontend
           frame . fmap ("_",) . choiceFade
 
       example "Choices: MaybeT Stack" $
-        display <=< stackHold $ runMaybeT $ choices $ \x ->
-          MaybeT $ frame $ ffor (choice x) $ \ev -> (Nothing, fmap Just ev)
+        display <=< stackHold $ runMaybeT $ choices $
+          MaybeT . frameAwait . choice
 
-      example "Stack of workflows" $ mdo
+      example "Wizard of MaybeT Stack" $ do
+        justShow <=< runWizard $ do
+          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameAwait . choice
+          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameAwait . choice
+          pure (x,y)
+
+      example "Stack of Workflow" $ mdo
          ymd <- stackHold $ do
            y <- frame . runWorkflow $ year clk 2000
            m <- frame . runWorkflow $ month clk January
