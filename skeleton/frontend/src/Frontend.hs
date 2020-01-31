@@ -16,6 +16,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
+
 module Frontend where
 
 import Control.Lens (makePrisms, preview)
@@ -28,7 +29,11 @@ import Data.Functor.Bind (Apply(..), Bind(..))
 import Data.Hourglass (Month(..), daysInMonth)
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import Language.Javascript.JSaddle (eval, liftJSM)
+
 import Obelisk.Frontend
+import Obelisk.Configs
 import Obelisk.Route
 import Obelisk.Route.Frontend
 import Reflex.Dom.Core hiding (wrap, workflow, workflowView)
@@ -166,6 +171,9 @@ br = el "br" blank
 instance Monad m => Apply (RoutedT t r m) where
   (<.>) = (<*>)
 
+-- This runs in a monad that can be run on the client or the server.
+-- To run code in a pure client or pure server context, use one of the
+-- `prerender` functions.
 frontend :: Frontend (R FrontendRoute)
 frontend = Frontend
   { _frontend_head = el "title" $ text "Workflow examples"
