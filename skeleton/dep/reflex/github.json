@@ -1,7 +1,8 @@
 {
   "owner": "reflex-frp",
   "repo": "reflex",
-  "branch": "ae-workflow-instances",
-  "rev": "04ad86e030256e06acb7034a0c35ad01053846f8",
-  "sha256": "0i57krgmda5gvp9jw58m5fa6cxdsd1j94znygihxh9fli071i1ks"
+  "branch": "ae@new-workflows",
+  "private": false,
+  "rev": "5ca63e14d2ee4d1bf54d6de057c013f7d6ebea5f",
+  "sha256": "0d72n91a3wi6yrd2h0agziqg4vr1p0kriib6ykjq2kj274iv33wj"
 }

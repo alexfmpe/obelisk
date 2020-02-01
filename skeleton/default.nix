@@ -1,35 +1,23 @@
 { obelisk ? import ./.obelisk/impl {
     system = builtins.currentSystem;
     iosSdkVersion = "10.2";
-    # You must accept the Android Software Development Kit License Agreement at
-    # https://developer.android.com/studio/terms in order to build Android apps.
-    # Uncomment and set this to `true` to indicate your acceptance:
-    # config.android_sdk.accept_license = false;
+    config.android_sdk.accept_license = true;
   }
 }:
-with obelisk; {
-  inherit system iosSdkVersion;
-  # You must accept the Android Software Development Kit License Agreement at
-  # https://developer.android.com/studio/terms in order to build Android apps.
-  # Uncomment and set this to `true` to indicate your acceptance:
-  # config.android_sdk.accept_license = false;
-};
-project ./. ({ pkgs, hackGet, ... }: with pkgs.haskell.lib;
-let
-  repos = {
-    reflex = hackGet dep/reflex;
-  };
-
-  overrideSrcs = {
-    inherit (repos) reflex;
-  };
-in {
+with obelisk;
+project ./. ({ pkgs, hackGet, ... }: with pkgs.haskell.lib; {
   android.applicationId = "systems.obsidian.obelisk.examples.minimal";
   android.displayName = "Obelisk Minimal Example";
   ios.bundleIdentifier = "systems.obsidian.obelisk.examples.minimal";
   ios.bundleName = "Obelisk Minimal Example";
 
-  overrides = pkgs.lib.foldr pkgs.lib.composeExtensions  (_: _: {}) [
-    (self: super: pkgs.lib.mapAttrs (name: path: self.callCabal2nix name path {}) overrideSrcs)
-  ];
+  packages = {
+    reflex = hackGet ./dep/reflex;
+    reflex-dom = (hackGet ./dep/reflex-dom) + /reflex-dom;
+    reflex-dom-core = (hackGet ./dep/reflex-dom) + /reflex-dom-core;
+  };
+
+  overrides = self: super: {
+    reflex-dom-core = pkgs.haskell.lib.dontCheck super.reflex-dom-core;
+  };
 })
