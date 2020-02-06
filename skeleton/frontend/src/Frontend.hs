@@ -112,32 +112,43 @@ frontend = Frontend
           br
           pure $ leftmost [a,b]
 
-        choices mkWorkflow = do
-          x0 <- mkWorkflow "0"
-          x1 <- mkWorkflow x0
-          x2 <- mkWorkflow x1
-          x3 <- mkWorkflow x2
+        controls = do
+          yes <- button "Replay"
+          no <- button "Stop"
+          br
+          pure $ leftmost [True <$ yes, False <$ no]
+
+        choices mkControls mkLayer = do
+          start <- replay
+          x0 <- mkLayer "0"
+          x1 <- mkLayer x0
+          x2 <- mkLayer x1
+          x3 <- mkLayer x2
+          again <- mkControls
+          when again
+            start
           pure x3
 
-        frameIncremental :: (Functor m, Reflex t) => m (Event t a) -> Stack t m (Maybe a)
+        frameIncremental :: (Adjustable t m, MonadHold t m, PostBuild t m) => m (Event t a) -> Stack t m (Maybe a)
         frameIncremental = frame . fmap (\ev -> (Nothing, fmap Just ev))
 
       example "Wizard" $
-        justShow <=< runWizard $ choices $
-          step . choice
+        justShow <=< runWizard $ choices (step controls) (step . choice)
 
       example "Stack: fixed layers" $
-        display <=< stackHold $ choices $
-          frame . fmap ("_",) . choiceFade
+        display <=< stackHold $ choices
+          (frame . fmap (False,) $ controls)
+          (frame . fmap ("_",) . choiceFade)
 
       example "Stack: incremental layers via MaybeT" $
-        display <=< stackHold $ runMaybeT $ choices $
-          MaybeT . frameIncremental . choice
+        display <=< stackHold $ runMaybeT $ choices
+          (MaybeT . frameIncremental $ controls)
+          (MaybeT . frameIncremental . choice)
 
       example "Wizard of incremental stacks" $ do
         justShow <=< runWizard $ do
-          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameIncremental . choice
-          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices $ MaybeT . frameIncremental . choice
+          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices (pure False) $ MaybeT . frameIncremental . choice
+          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices (pure False) $ MaybeT . frameIncremental . choice
           pure (x,y)
 
       example "Stack of workflows" $ mdo
