@@ -1,9 +1,14 @@
 # Obelisk
 
+[![Haskell Programming Language](https://img.shields.io/badge/language-Haskell-blue.svg)](http://www.haskell.org)
+[![BSD3 License](http://img.shields.io/badge/license-BSD3-brightgreen.svg)](https://tldrlegal.com/license/bsd-3-clause-license-%28revised%29)
+
+
 Obelisk provides an easy way to develop and deploy your [Reflex](https://github.com/reflex-frp/reflex) project as web apps and as mobile apps.
 
 - [Installing Obelisk](#installing-obelisk)
 - [Developing an Obelisk project](#developing-an-obelisk-project)
+  - [HLint](#hlint)
   - [Adding Packages](#adding-packages)
   - [Adding Package Overrides](#adding-package-overrides)
   - [Running over https](#running-over-https)
@@ -110,6 +115,11 @@ Now, with an appropriate browser, go to http://localhost:8000 (or the address/po
 Firefox will not be able to properly run the development website due to [issue 460](https://github.com/obsidiansystems/obelisk/issues/460). Fortunately, this problem does not occur on a fully built website.
 
 Every time you change the Haskell source files in frontend, common or backend, `ob run` will automatically recompile the modified files and reload the server. Furthermore, it will display on screen compilation errors and warnings if any.
+
+### HLint
+
+To avoid having HLint run on reloaded modules, pass the `--no-hlint` flag to `ob run` or `ob watch`.
+Customizing hints is done as in [standalone use](https://github.com/ndmitchell/hlint#customizing-the-hints).
 
 ### Adding packages
 
