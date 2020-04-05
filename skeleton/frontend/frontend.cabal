@@ -17,7 +17,7 @@ library
                , text
   exposed-modules:
     Frontend
-  ghc-options: -Wall
+  ghc-options: -Wall -fobject-code
 
 executable frontend
   main-is: main.hs
