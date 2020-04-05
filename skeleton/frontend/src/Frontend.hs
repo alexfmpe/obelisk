@@ -11,7 +11,6 @@ import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Language.C.Inline as C
 import Language.Javascript.JSaddle (eval, liftJSM)
 
 import Obelisk.Frontend
@@ -24,7 +23,11 @@ import Reflex.Dom.Core
 import Common.Api
 import Common.Route
 
+#ifdef ghcjs_HOST_OS
+#else
+import qualified Language.C.Inline as C
 C.include "<math.h>"
+#endif
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -46,7 +49,7 @@ frontend = Frontend
       prerender_ blank $ do
         liftJSM $ void $ eval ("console.log('Hello, World!')" :: T.Text)
 
-#ifdef  ghcjs_HOST_OS
+#ifdef ghcjs_HOST_OS
 #else
         el "div" . text . T.pack . show =<< liftIO [C.exp| double{ cos(1) } |]
         el "div" . text . T.pack . show =<< liftIO [C.exp| double{ sin(1) } |]
