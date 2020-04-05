@@ -10,6 +10,7 @@ library
                , inline-c
                , obelisk-frontend
                , obelisk-route
+               , jsaddle
                , reflex-dom
                , obelisk-executable-config-lookup
                , obelisk-generated-static
