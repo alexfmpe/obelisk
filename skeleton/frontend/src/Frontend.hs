@@ -1,3 +1,13 @@
+{-# LANGUAGE CPP #-}
+
+-- always works
+#if MIN_VERSION_text(0,0,0)
+#endif
+
+-- fails under 'ob watch'
+#if MIN_VERSION_obelisk_route(0,0,0)
+#endif
+
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
