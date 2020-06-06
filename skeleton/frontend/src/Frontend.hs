@@ -46,25 +46,20 @@ frontend = Frontend
       el "title" $ text "Obelisk Minimal Example"
       elAttr "link" ("href" =: static @"main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank
   , _frontend_body = do
+      let beforeAfter ev = runWithReplace (el "p" $ text "before") $ ffor ev $ \_ -> el "p" $ text "after"
+
       el "h1" $ text "Welcome to Obelisk!"
       el "p" $ text $ T.pack commonStuff
 
-      -- `prerender` and `prerender_` let you choose a widget to run on the server
-      -- during prerendering and a different widget to run on the client with
-      -- JavaScript. The following will generate a `blank` widget on the server and
-      -- print "Hello, World!" on the client.
-      prerender_ blank $ liftJSM $ void $ eval ("console.log('Hello, World!')" :: T.Text)
-
-      elAttr "img" ("src" =: static @"obelisk.jpg") blank
-      el "div" $ do
-        exampleConfig <- getConfig "common/example"
-        case exampleConfig of
-          Nothing -> text "No config file found in config/common/example"
-          Just s -> text $ T.decodeUtf8 s
+      ticks <- tickLossyFromPostBuildTime 2
+      beforeAfter ticks
 
       prerender_ blank $ do
         html <- root
         tick <- tickLossyFromPostBuildTime 0.3
+
+        beforeAfter ticks
+
         widgetHold_ blank $ ffor tick $ \_ -> do
           tree <- drawTree <$> currentTree html
           el "pre" . text . T.pack $ tree
@@ -74,7 +69,7 @@ frontend = Frontend
 
 {- Example -}
 example
-  :: (MonadFix m, MonadIO m, MonadIO (Performable m), MonadHold t m, PerformEvent t m, PostBuild t m, TriggerEvent t m)
+  :: (MonadFix m, MonadIO m, MonadIO (Performable m), MonadHold t m, PerformEvent t m, PostBuild t m, TriggerEvent t m, Adjustable t m)
   => DOMNode m -> m (Dynamic t Int)
 example parent = do
   div <- el_ parent "div" mempty
@@ -84,7 +79,6 @@ example parent = do
   but2 <- el_ div "button" $ "background" =: "red"
   let clickEv = leftmost [click but1, click but2]
   clicks <- foldDyn (+) 0 $ 1 <$ clickEv
-
 
   let
     w0 anchor cast = do
@@ -99,6 +93,9 @@ example parent = do
 
   tick <- tickLossyFromPostBuildTime 1
   tg <- toggle True tick
+
+  runWithReplace (el_ parent "p" mempty) $ ffor tick $ \_ -> blank
+
   (_n0, _nEv) <- elAdjustable_ parent w0 $ \anchor -> ffor (updated tg) $ wEv anchor
 
   pure clicks
@@ -109,7 +106,7 @@ gallery anchor = do
     anchor "img" $ "src" =: (src <> ".png")
 
 root
-  :: (MonadFix m, MonadIO m, MonadIO (Performable m), MonadHold t m, PerformEvent t m, PostBuild t m, TriggerEvent t m)
+  :: (MonadFix m, MonadIO m, MonadIO (Performable m), MonadHold t m, PerformEvent t m, PostBuild t m, TriggerEvent t m, Adjustable t m)
   => m (DOMNode m)
 root = mkRoot $ \(_h,b) -> example b
 

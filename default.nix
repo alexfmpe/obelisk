@@ -23,6 +23,10 @@ let
       pkgs.obeliskExecutableConfig.haskellOverlay
       (import ./haskell-overlays/obelisk.nix)
       (import ./haskell-overlays/tighten-ob-exes.nix)
+      (self: super: {
+        reflex-dom = self.callCabal2nix "reflex-dom" (hackGet ./dep/reflex-dom + "/reflex-dom") {};
+        reflex-dom-core = self.callCabal2nix "reflex-dom-core" (hackGet ./dep/reflex-dom + "/reflex-dom-core) {};
+      })
     ];
   };
 
