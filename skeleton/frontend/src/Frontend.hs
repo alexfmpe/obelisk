@@ -1,4 +1,7 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -7,8 +10,10 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -121,19 +126,20 @@ elTree' (Node (tg, attrs) children) = do
   (n, cs) <- elAttr' tg attrs $ traverse elTree' children
   pure $ Node n cs
 
-data T xs a = T a (V xs a)
-data V (l :: [* -> *]) a where
-  VNil :: V '[] a
-  VCons :: T xs a -> V xss a -> V (T xs : xss) a
+data T xs a = T a (V xs T a)
+deriving instance Functor (T xs)
+deriving instance Foldable (T xs)
+deriving instance Traversable (T xs)
 
-traverseT :: Monad m => (a -> m b) -> T xs a -> m (T xs b)
-traverseT f (T a xs) = do
-  T <$> f a <*> traverseV f xs
+data V (l :: [* -> *]) f a where
+  VNil :: V '[] f a
+  VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
 
-traverseV :: Monad m => (a -> m b) -> V xs a -> m (V xs b)
-traverseV f = traverseVT $ traverseT f
+deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
+deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
+deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
 
-traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss a -> m (V xss b)
+traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a -> m (V xss T b)
 traverseVT f = \case
   VNil -> pure VNil
   VCons t v -> VCons <$> f t <*> traverseVT f v
