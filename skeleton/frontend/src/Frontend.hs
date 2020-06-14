@@ -20,18 +20,13 @@
 module Frontend where
 
 import Control.Monad
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import Language.Javascript.JSaddle (eval, liftJSM)
 
 import Obelisk.Frontend
-import Obelisk.Configs
 import Obelisk.Route
 import Obelisk.Generated.Static
 
 import Reflex.Dom.Core
 
-import Common.Api
 import Common.Route
 
 import Data.Map (Map)
@@ -49,22 +44,6 @@ frontend = Frontend
       el "title" $ text "Obelisk Minimal Example"
       elAttr "link" ("href" =: static @"main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank
   , _frontend_body = do
-      el "h1" $ text "Welcome to Obelisk!"
-      el "p" $ text $ T.pack commonStuff
-
-      -- `prerender` and `prerender_` let you choose a widget to run on the server
-      -- during prerendering and a different widget to run on the client with
-      -- JavaScript. The following will generate a `blank` widget on the server and
-      -- print "Hello, World!" on the client.
-      prerender_ blank $ liftJSM $ void $ eval ("console.log('Hello, World!')" :: T.Text)
-
-      elAttr "img" ("src" =: static @"obelisk.jpg") blank
-      el "div" $ do
-        exampleConfig <- getConfig "common/example"
-        case exampleConfig of
-          Nothing -> text "No config file found in config/common/example"
-          Just s -> text $ T.decodeUtf8 s
-      return ()
 
 
 
@@ -75,7 +54,6 @@ frontend = Frontend
       case t of
         Node _div [_img] -> text "lol"
         _ -> error "noes"
-
 
 
 
@@ -126,6 +104,11 @@ elTree' (Node (tg, attrs) children) = do
   (n, cs) <- elAttr' tg attrs $ traverse elTree' children
   pure $ Node n cs
 
+elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
+elTree (T (tg, attrs) xs) = do
+  (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
+  pure $ T n cs
+
 data T xs a = T a (V xs T a)
 deriving instance Functor (T xs)
 deriving instance Foldable (T xs)
@@ -134,7 +117,6 @@ deriving instance Traversable (T xs)
 data V (l :: [* -> *]) f a where
   VNil :: V '[] f a
   VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
-
 deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
 deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
 deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
@@ -143,8 +125,3 @@ traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a ->
 traverseVT f = \case
   VNil -> pure VNil
   VCons t v -> VCons <$> f t <*> traverseVT f v
-
-elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
-elTree (T (tg, attrs) xs) = do
-  (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
-  pure $ T n cs
