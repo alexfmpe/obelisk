@@ -17,6 +17,9 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -Werror=inaccessible-code #-}
+{-# OPTIONS_GHC -Werror=overlapping-patterns #-}
+
 module Frontend where
 
 import Control.Monad
@@ -98,14 +101,13 @@ frontend = Frontend
 
       t0 <- elTree $ TBranch ("div", mempty) VNil
 
-      -- no issues
       let (TBranch _div VNil) = t0
 
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[]’ with ‘T xs : xss’
-      let (TBranch _div (VCons _ _)) = t0
+      -- let (TBranch _div (VCons _ _)) = t0
 
       -- • Could not deduce: x ~ p0
       -- let (TLeaf x) = t0
@@ -119,11 +121,9 @@ frontend = Frontend
         $ VCons (TBranch ("div", mempty) (VCons (TBranch ("br", mempty) VNil) VNil))
         VNil
 
-      -- no issues
       let (TBranch _div (VCons (TBranch _img VNil)
                   (VCons (TBranch __div (VCons _br VNil)) VNil))) = t1
 
-      -- no issues
       let (TBranch _div (VCons _
                   (VCons (TBranch __div (VCons _br VNil)) _))) = t1
 
@@ -131,15 +131,14 @@ frontend = Frontend
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[T '[], T '[T '[]]]’ with ‘'[]’
-
-      let (TBranch _div' VNil) = t1
+      -- let (TBranch _div' VNil) = t1
 
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[T '[]]’ with ‘'[]’
-      let (TBranch _div (VCons (TBranch _img VNil)
-                  (VCons (TBranch __div VNil) VNil))) = t1
+      -- let (TBranch _div (VCons (TBranch _img VNil)
+      --             (VCons (TBranch __div VNil) VNil))) = t1
 
       pure ()
   }
