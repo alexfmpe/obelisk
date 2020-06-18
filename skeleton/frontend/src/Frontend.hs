@@ -107,6 +107,12 @@ frontend = Frontend
 
       let (TBranch _div VNil) = t0
 
+      elTree (TBranch ("div", mempty) VNil) >>= \case
+        TBranch _div VNil -> pure ()
+
+      -- • Could not deduce MonadFail
+      -- (TBranch div VNil) <- elTree $ TBranch ("div", mempty) VNil
+
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
@@ -115,9 +121,6 @@ frontend = Frontend
 
       -- • Could not deduce: x ~ p0
       -- let (TLeaf x) = t0
-
-      -- • Could not deduce MonadFail
-      -- (TBranch div VNil) <- elTree $ TBranch ("div", mempty) VNil
 
 
       t1 <- elTree $ TBranch ("div", mempty)
@@ -143,6 +146,31 @@ frontend = Frontend
       --     Couldn't match type ‘'[T '[]]’ with ‘'[]’
       -- let (TBranch _div (VCons (TBranch _img VNil)
       --             (VCons (TBranch __div VNil) VNil))) = t1
+
+      elTree (TLeaf $ el "br" blank) >>= \case
+        TLeaf br -> br
+
+      {-
+      -- warning: [-Winaccessible-code, -Werror=inaccessible-code]
+      --     • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
+      elTree (TLeaf $ el "br" blank) >>= \case
+        TLeaf br -> br
+        TBranch _ _ -> pure ()
+      -}
+
+      t3 <- elTree $ TBranch ("div", mempty)
+        $ VCons (TLeaf (0 :: Int))
+        $ VCons (TBranch ("img", mempty) VNil)
+        $ VCons (TLeaf $ el "br" blank)
+        $ VNil
+
+      let
+        (TBranch _div
+         (VCons (TLeaf _zero)
+          (VCons (TBranch _img VNil)
+           (VCons (TLeaf br')
+            VNil)))) = t3
+      br'
 
       pure ()
   }
