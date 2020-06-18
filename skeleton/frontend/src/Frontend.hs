@@ -39,28 +39,32 @@ import Data.Tree
 
 import Prelude hiding (div)
 
-data T (children :: [* -> *]) (spine :: *) where
-  TLeaf :: x -> T '[Const x] spine
-  TBranch :: spine -> V children T spine -> T children spine
+data TTag
+  = TTagLeaf
+  | TTagBranch
 
-deriving instance Functor (T children)
-deriving instance Foldable (T children)
-deriving instance Traversable (T children)
+data T (tag :: TTag) (children :: [* -> *]) (spine :: *) where
+  TLeaf :: x -> T 'TTagLeaf '[Const x] spine
+  TBranch :: spine -> V children T spine -> T 'TTagBranch children spine
 
-data V (l :: [* -> *]) (f :: [* -> *] -> * -> *) a where
+deriving instance Functor (T tag children)
+deriving instance Foldable (T tag children)
+deriving instance Traversable (T tag children)
+
+data V (l :: [* -> *]) (f :: k -> [* -> *] -> * -> *) a where
   VNil :: V '[] f a
-  VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
+  VCons :: f t xs a -> V xss f a -> V (f t xs : xss) f a
 
-deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
-deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
-deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
+deriving instance (forall tag xs. Functor (f tag xs)) => Functor (V l f)
+deriving instance (forall tag xs. Foldable (f tag xs)) => Foldable (V l f)
+deriving instance (forall tag xs. Traversable (f tag xs)) => Traversable (V l f)
 
-mapVT :: (forall xs. T xs a -> T xs b) -> V shape T a -> V shape T b
+mapVT :: (forall tag xs. T tag xs a -> T tag xs b) -> V shape T a -> V shape T b
 mapVT f = \case
   VNil -> VNil
   VCons t xs -> VCons (f t) (mapVT f xs)
 
-traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a -> m (V xss T b)
+traverseVT :: Applicative m => (forall tag xs. T tag xs a -> m (T tag xs b)) -> V xss T a -> m (V xss T b)
 traverseVT f = \case
   VNil -> pure VNil
   VCons t v -> VCons <$> f t <*> traverseVT f v
@@ -70,7 +74,7 @@ elTree' (Node (tg, attrs) children) = do
   (n, cs) <- elAttr' tg attrs $ traverse elTree' children
   pure $ Node n cs
 
-elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
+elTree :: DomBuilder t m => T tag xs (Text, Map Text Text) -> m (T tag xs (Element EventResult (DomBuilderSpace m) t))
 elTree = \case
   TLeaf x -> pure $ TLeaf x
   TBranch (tg, attrs) xs -> do
