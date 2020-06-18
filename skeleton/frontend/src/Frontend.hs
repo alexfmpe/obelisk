@@ -29,24 +29,33 @@ import Reflex.Dom.Core
 
 import Common.Route
 
+import Data.Functor.Const
 import Data.Map (Map)
 import Data.Text (Text)
 import Data.Tree
 
 import Prelude hiding (div)
 
+data T (children :: [* -> *]) (spine :: *) where
+  TLeaf :: x -> T '[Const x] spine
+  TBranch :: spine -> V children T spine -> T children spine
 
-data T xs a = T a (V xs T a)
-deriving instance Functor (T xs)
-deriving instance Foldable (T xs)
-deriving instance Traversable (T xs)
+deriving instance Functor (T children)
+deriving instance Foldable (T children)
+deriving instance Traversable (T children)
 
-data V (l :: [* -> *]) f a where
+data V (l :: [* -> *]) (f :: [* -> *] -> * -> *) a where
   VNil :: V '[] f a
   VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
+
 deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
 deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
 deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
+
+mapVT :: (forall xs. T xs a -> T xs b) -> V shape T a -> V shape T b
+mapVT f = \case
+  VNil -> VNil
+  VCons t xs -> VCons (f t) (mapVT f xs)
 
 traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a -> m (V xss T b)
 traverseVT f = \case
@@ -59,9 +68,11 @@ elTree' (Node (tg, attrs) children) = do
   pure $ Node n cs
 
 elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
-elTree (T (tg, attrs) xs) = do
-  (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
-  pure $ T n cs
+elTree = \case
+  TLeaf x -> pure $ TLeaf x
+  TBranch (tg, attrs) xs -> do
+    (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
+    pure $ TBranch n cs
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -85,44 +96,50 @@ frontend = Frontend
 
 
 
-      t0 <- elTree $ T ("div", mempty) VNil
+      t0 <- elTree $ TBranch ("div", mempty) VNil
 
       -- no issues
-      let (T _div VNil) = t0
+      let (TBranch _div VNil) = t0
 
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[]’ with ‘T xs : xss’
-      let (T _div (VCons _ _)) = t0
+      let (TBranch _div (VCons _ _)) = t0
 
-      -- (T div VNil) <- elTree $ T ("div", mempty) VNil -- Could not deduce MonadFail
+      -- • Could not deduce: x ~ p0
+      -- let (TLeaf x) = t0
 
-      t1 <- elTree $ T ("div", mempty)
-        $ VCons (T ("img", mempty) VNil)
-        $ VCons (T ("div", mempty) (VCons (T ("br", mempty) VNil) VNil))
+      -- • Could not deduce MonadFail
+      -- (TBranch div VNil) <- elTree $ TBranch ("div", mempty) VNil
+
+
+      t1 <- elTree $ TBranch ("div", mempty)
+        $ VCons (TBranch ("img", mempty) VNil)
+        $ VCons (TBranch ("div", mempty) (VCons (TBranch ("br", mempty) VNil) VNil))
         VNil
 
       -- no issues
-      let (T _div (VCons (T _img VNil)
-                  (VCons (T __div (VCons _br VNil)) VNil))) = t1
+      let (TBranch _div (VCons (TBranch _img VNil)
+                  (VCons (TBranch __div (VCons _br VNil)) VNil))) = t1
 
       -- no issues
-      let (T _div (VCons _
-                  (VCons (T __div (VCons _br VNil)) _))) = t1
+      let (TBranch _div (VCons _
+                  (VCons (TBranch __div (VCons _br VNil)) _))) = t1
 
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[T '[], T '[T '[]]]’ with ‘'[]’
 
-      let (T _div' VNil) = t1
+      let (TBranch _div' VNil) = t1
 
       -- warning: [-Woverlapping-patterns]
       --     Pattern match has inaccessible right hand side
       -- warning: [-Winaccessible-code]
       --     Couldn't match type ‘'[T '[]]’ with ‘'[]’
-      let (T _div (VCons (T _img VNil)
-                  (VCons (T __div VNil) VNil))) = t1
+      let (TBranch _div (VCons (TBranch _img VNil)
+                  (VCons (TBranch __div VNil) VNil))) = t1
+
       pure ()
   }
