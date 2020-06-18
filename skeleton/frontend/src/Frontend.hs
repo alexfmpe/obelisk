@@ -35,6 +35,34 @@ import Data.Tree
 
 import Prelude hiding (div)
 
+
+data T xs a = T a (V xs T a)
+deriving instance Functor (T xs)
+deriving instance Foldable (T xs)
+deriving instance Traversable (T xs)
+
+data V (l :: [* -> *]) f a where
+  VNil :: V '[] f a
+  VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
+deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
+deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
+deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
+
+traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a -> m (V xss T b)
+traverseVT f = \case
+  VNil -> pure VNil
+  VCons t v -> VCons <$> f t <*> traverseVT f v
+
+elTree' :: DomBuilder t m => Tree (Text, Map Text Text) -> m (Tree (Element EventResult (DomBuilderSpace m) t))
+elTree' (Node (tg, attrs) children) = do
+  (n, cs) <- elAttr' tg attrs $ traverse elTree' children
+  pure $ Node n cs
+
+elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
+elTree (T (tg, attrs) xs) = do
+  (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
+  pure $ T n cs
+
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
 -- `prerender` functions.
@@ -98,30 +126,3 @@ frontend = Frontend
                   (VCons (T __div VNil) VNil))) = t1
       pure ()
   }
-
-elTree' :: DomBuilder t m => Tree (Text, Map Text Text) -> m (Tree (Element EventResult (DomBuilderSpace m) t))
-elTree' (Node (tg, attrs) children) = do
-  (n, cs) <- elAttr' tg attrs $ traverse elTree' children
-  pure $ Node n cs
-
-elTree :: DomBuilder t m => T xs (Text, Map Text Text) -> m (T xs (Element EventResult (DomBuilderSpace m) t))
-elTree (T (tg, attrs) xs) = do
-  (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
-  pure $ T n cs
-
-data T xs a = T a (V xs T a)
-deriving instance Functor (T xs)
-deriving instance Foldable (T xs)
-deriving instance Traversable (T xs)
-
-data V (l :: [* -> *]) f a where
-  VNil :: V '[] f a
-  VCons :: f xs a -> V xss f a -> V (f xs : xss) f a
-deriving instance (forall xs. Functor (f xs)) => Functor (V l f)
-deriving instance (forall xs. Foldable (f xs)) => Foldable (V l f)
-deriving instance (forall xs. Traversable (f xs)) => Traversable (V l f)
-
-traverseVT :: Applicative m => (forall xs. T xs a -> m (T xs b)) -> V xss T a -> m (V xss T b)
-traverseVT f = \case
-  VNil -> pure VNil
-  VCons t v -> VCons <$> f t <*> traverseVT f v
