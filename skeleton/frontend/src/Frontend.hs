@@ -84,6 +84,12 @@ elTree = \case
     (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
     pure $ TBranch n cs
 
+leaf :: m x -> T 'TTagLeaf '[Const2 x] m spine
+leaf = TLeaf
+
+branch :: spine -> V (x ': xs) T m spine -> T 'TTagBranch (x ': xs) m spine
+branch = TBranch
+
 {-# COMPLETE Leaf #-}
 pattern Leaf
   :: x
@@ -133,12 +139,12 @@ frontend = Frontend
 
 
 
-      t0 <- elTree $ TLeaf $ el "div" $ pure (0 :: Int)
+      t0 <- elTree $ leaf $ el "div" $ pure (0 :: Int)
 
       let Leaf zero = t0
       text $ T.pack $ show zero
 
-      elTree (TLeaf (el "div" blank)) >>= \case
+      elTree (leaf (el "div" blank)) >>= \case
         Leaf () -> pure ()
 --      Branch _ _ -> pure ()
 --    • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
@@ -147,12 +153,12 @@ frontend = Frontend
       -- • Could not deduce MonadFail
 --      (Branch div _) <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
 
-      t1 <- elTree $ TBranch ("div", mempty) $ TLeaf (el "div" blank) :+ nil
+      t1 <- elTree $ branch ("div", mempty) $ leaf (el "div" blank) :+ nil
       let Branch _div _ = t1
 
-      t2 <- elTree $ TBranch ("div", mempty)
-        $ (TLeaf (el "img" blank))
-        :+ TBranch ("div", mempty) (TLeaf (el "br" blank) :+ nil)
+      t2 <- elTree $ branch ("div", mempty)
+        $ (leaf (el "img" blank))
+        :+ branch ("div", mempty) (leaf (el "br" blank) :+ nil)
         :+ nil
 
       let Branch _div
@@ -171,9 +177,9 @@ frontend = Frontend
       let Branch _node _children = t3
       -}
 
-      t4 <- elTree $ TBranch ("div", mempty)
-        $  TLeaf (el "img" blank)
-        :+ TLeaf (el "br" $ pure (3 :: Int))
+      t4 <- elTree $ branch ("div", mempty)
+        $  leaf (el "img" blank)
+        :+ leaf (el "br" $ pure (3 :: Int))
         :+ nil
 
       let
