@@ -47,7 +47,7 @@ data TTag
 
 data T (tag :: TTag) (children :: [(* -> *) -> * -> *]) (m :: * -> *) (spine :: *) where
   TLeaf :: m x -> T 'TTagLeaf '[Const2 x] m spine
-  TBranch :: spine -> V children T m spine -> T 'TTagBranch children m spine
+  TBranch :: spine -> V (x ': xs) T m spine -> T 'TTagBranch (x ': xs) m spine
 
 deriving instance Functor (T tag children m)
 deriving instance Foldable (T tag children m)
@@ -104,13 +104,13 @@ frontend = Frontend
         _ -> error "noes"
 
 
+      t0 <- elTree $ TLeaf $ el "div" $ pure (0 :: Int)
 
-      t0 <- elTree $ TBranch ("div", mempty) VNil
+      let (TLeaf (Identity zero)) = t0
+      text $ T.pack $ show zero
 
-      let (TBranch _div VNil) = t0
-
-      elTree (TBranch ("div", mempty) VNil) >>= \case
-        TBranch _div VNil -> pure ()
+      elTree (TLeaf (el "div" blank)) >>= \case
+        TLeaf (Identity ()) -> pure ()
 
       -- • Could not deduce MonadFail
       -- (TBranch div VNil) <- elTree $ TBranch ("div", mempty) VNil
@@ -126,15 +126,12 @@ frontend = Frontend
 
 
       t1 <- elTree $ TBranch ("div", mempty)
-        $ VCons (TBranch ("img", mempty) VNil)
-        $ VCons (TBranch ("div", mempty) (VCons (TBranch ("br", mempty) VNil) VNil))
+        $ VCons (TLeaf (el "img" blank))
+        $ VCons (TBranch ("div", mempty) (VCons (TLeaf (el "br" blank)) VNil))
         VNil
 
-      let (TBranch _div (VCons (TBranch _img VNil)
+      let (TBranch _div (VCons (TLeaf _)
                   (VCons (TBranch __div (VCons _br VNil)) VNil))) = t1
-
-      let (TBranch _div (VCons _
-                  (VCons (TBranch __div (VCons _br VNil)) _))) = t1
 
       {-
          warning: [-Woverlapping-patterns]
@@ -172,17 +169,17 @@ frontend = Frontend
      -}
 
       t3 <- elTree $ TBranch ("div", mempty)
-        $ VCons (TBranch ("img", mempty) VNil)
-        $ VCons (TLeaf $ el "br" $ pure (0 :: Int))
+        $ VCons (TLeaf (el "img" blank))
+        $ VCons (TLeaf $ el "br" $ pure (3 :: Int))
         $ VNil
 
       let
         (TBranch _div
-         (VCons (TBranch _img VNil)
-          (VCons (TLeaf (Identity zero))
+         (VCons (TLeaf _img)
+          (VCons (TLeaf (Identity three))
            VNil))) = t3
 
-      text $ T.pack $ show $ zero
+      text $ T.pack $ show $ three
 
       pure ()
   }
