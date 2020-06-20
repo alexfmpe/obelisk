@@ -9,6 +9,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
@@ -83,6 +84,19 @@ elTree = \case
     (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
     pure $ TBranch n cs
 
+{-# COMPLETE Leaf #-}
+pattern Leaf
+  :: x
+  -> T 'TTagLeaf '[Const2 x] Identity spine
+pattern Leaf x = TLeaf (Identity x)
+
+{-# COMPLETE Branch #-}
+pattern Branch
+  :: spine
+  -> V (x ': xs) T Identity spine
+  -> T 'TTagBranch (x ': xs) Identity spine
+pattern Branch node children = TBranch node children
+
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
 -- `prerender` functions.
@@ -93,8 +107,6 @@ frontend = Frontend
       elAttr "link" ("href" =: static @"main.css" <> "type" =: "text/css" <> "rel" =: "stylesheet") blank
   , _frontend_body = do
 
-
-
       t <- elTree' $ Node ("div", "style" =: "background:green")
         [ Node ("img", "src" =: static @"obelisk.jpg") []
         ]
@@ -104,80 +116,53 @@ frontend = Frontend
         _ -> error "noes"
 
 
+
       t0 <- elTree $ TLeaf $ el "div" $ pure (0 :: Int)
 
-      let (TLeaf (Identity zero)) = t0
+      let Leaf zero = t0
       text $ T.pack $ show zero
 
       elTree (TLeaf (el "div" blank)) >>= \case
-        TLeaf (Identity ()) -> pure ()
+        Leaf () -> pure ()
+--      Branch _ _ -> pure ()
+--    • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
+
 
       -- • Could not deduce MonadFail
-      -- (TBranch div VNil) <- elTree $ TBranch ("div", mempty) VNil
+--      (Branch div _) <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
 
-      -- warning: [-Woverlapping-patterns]
-      --     Pattern match has inaccessible right hand side
-      -- warning: [-Winaccessible-code]
-      --     Couldn't match type ‘'[]’ with ‘T xs : xss’
-      -- let (TBranch _div (VCons _ _)) = t0
+      t1 <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
+      let Branch _div _ = t1
 
-      -- • Could not deduce: x ~ p0
-      -- let (TLeaf x) = t0
-
-
-      t1 <- elTree $ TBranch ("div", mempty)
+      t2 <- elTree $ TBranch ("div", mempty)
         $ VCons (TLeaf (el "img" blank))
         $ VCons (TBranch ("div", mempty) (VCons (TLeaf (el "br" blank)) VNil))
         VNil
 
-      let (TBranch _div (VCons (TLeaf _)
-                  (VCons (TBranch __div (VCons _br VNil)) VNil))) = t1
+      let (Branch _div (VCons (Leaf ())
+                  (VCons (Branch __div (VCons _br VNil)) VNil))) = t2
 
       {-
-         warning: [-Woverlapping-patterns]
-             Pattern match has inaccessible right hand side
-         warning: [-Winaccessible-code]
-             • Couldn't match type ‘'[T 'TTagBranch '[],
-                                      T 'TTagBranch '[T 'TTagBranch '[]]]’
-                              with ‘'[]’
-
-      let (TBranch _div' VNil) = t1
+        • Couldn't match type ‘'TTagBranch’ with ‘'TTagLeaf’
+      let Leaf _ = t2
       -}
 
       {-
-         warning: [-Woverlapping-patterns]
-             Pattern match has inaccessible right hand side
-         warning: [-Winaccessible-code]
-            • Couldn't match type ‘'[T 'TTagBranch '[]]’ with ‘'[]’
-
-      let (TBranch _div (VCons (TBranch _img VNil)
-                 (VCons (TBranch __div VNil) VNil))) = t1
+        • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
+      t3 <- elTree (TLeaf $ el "br" blank)
+      let Branch _node _children = t3
       -}
-      _ <- elTree (TLeaf $ el "br" blank)
 
-      elTree (TLeaf $ el "br" blank) >>= \case
-        TLeaf _br -> pure ()
-
-      {-
-        • Couldn't match expected type ‘p0’
-                      with actual type ‘Element EventResult (DomBuilderSpace m) t’
-            ‘p0’ is untouchable
-              inside the constraints: 'TTagLeaf ~ 'TTagBranch
-
-      t2 <- elTree (TLeaf $ el "br" blank)
-      let TBranch _node _children = t2
-     -}
-
-      t3 <- elTree $ TBranch ("div", mempty)
+      t4 <- elTree $ TBranch ("div", mempty)
         $ VCons (TLeaf (el "img" blank))
         $ VCons (TLeaf $ el "br" $ pure (3 :: Int))
         $ VNil
 
       let
-        (TBranch _div
-         (VCons (TLeaf _img)
-          (VCons (TLeaf (Identity three))
-           VNil))) = t3
+        (Branch _div
+         (VCons (Leaf ())
+          (VCons (Leaf three)
+           VNil))) = t4
 
       text $ T.pack $ show $ three
 
