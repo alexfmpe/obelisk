@@ -23,7 +23,7 @@
 module Frontend where
 
 import Control.Monad
-
+import Data.Functor.Identity
 import Obelisk.Frontend
 import Obelisk.Route
 import Obelisk.Generated.Static
@@ -32,39 +32,41 @@ import Reflex.Dom.Core
 
 import Common.Route
 
-import Data.Functor.Const
 import Data.Map (Map)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Tree
 
 import Prelude hiding (div)
+
+data Const2 a m b = Const2 a
 
 data TTag
   = TTagLeaf
   | TTagBranch
 
-data T (tag :: TTag) (children :: [* -> *]) (spine :: *) where
-  TLeaf :: x -> T 'TTagLeaf '[Const x] spine
-  TBranch :: spine -> V children T spine -> T 'TTagBranch children spine
+data T (tag :: TTag) (children :: [(* -> *) -> * -> *]) (m :: * -> *) (spine :: *) where
+  TLeaf :: m x -> T 'TTagLeaf '[Const2 x] m spine
+  TBranch :: spine -> V children T m spine -> T 'TTagBranch children m spine
 
-deriving instance Functor (T tag children)
-deriving instance Foldable (T tag children)
-deriving instance Traversable (T tag children)
+deriving instance Functor (T tag children m)
+deriving instance Foldable (T tag children m)
+deriving instance Traversable (T tag children m)
 
-data V (l :: [* -> *]) (f :: k -> [* -> *] -> * -> *) a where
-  VNil :: V '[] f a
-  VCons :: f t xs a -> V xss f a -> V (f t xs : xss) f a
+data V (shape :: [(* -> *) -> * -> *]) (f :: k -> [(* -> *) -> * -> *] -> (* -> *) -> * -> *) (m :: * -> *) a where
+  VNil :: V '[] f m a
+  VCons :: f t xs m a -> V xss f m a -> V (f t xs : xss) f m a
 
-deriving instance (forall tag xs. Functor (f tag xs)) => Functor (V l f)
-deriving instance (forall tag xs. Foldable (f tag xs)) => Foldable (V l f)
-deriving instance (forall tag xs. Traversable (f tag xs)) => Traversable (V l f)
+deriving instance (forall tag xs. Functor (f tag xs m)) => Functor (V l f m)
+deriving instance (forall tag xs. Foldable (f tag xs m)) => Foldable (V l f m)
+deriving instance (forall tag xs. Traversable (f tag xs m)) => Traversable (V l f m)
 
-mapVT :: (forall tag xs. T tag xs a -> T tag xs b) -> V shape T a -> V shape T b
+mapVT :: (forall tag xs. T tag xs m a -> T tag xs m b) -> V shape T m a -> V shape T m b
 mapVT f = \case
   VNil -> VNil
   VCons t xs -> VCons (f t) (mapVT f xs)
 
-traverseVT :: Applicative m => (forall tag xs. T tag xs a -> m (T tag xs b)) -> V xss T a -> m (V xss T b)
+traverseVT :: Applicative m => (forall tag xs. T tag xs m a -> m (T tag xs n b)) -> V xss T m a -> m (V xss T n b)
 traverseVT f = \case
   VNil -> pure VNil
   VCons t v -> VCons <$> f t <*> traverseVT f v
@@ -74,9 +76,9 @@ elTree' (Node (tg, attrs) children) = do
   (n, cs) <- elAttr' tg attrs $ traverse elTree' children
   pure $ Node n cs
 
-elTree :: DomBuilder t m => T tag xs (Text, Map Text Text) -> m (T tag xs (Element EventResult (DomBuilderSpace m) t))
+elTree :: DomBuilder t m => T tag xs m (Text, Map Text Text) -> m (T tag xs Identity (Element EventResult (DomBuilderSpace m) t))
 elTree = \case
-  TLeaf x -> pure $ TLeaf x
+  TLeaf x -> TLeaf . Identity <$> x
   TBranch (tg, attrs) xs -> do
     (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
     pure $ TBranch n cs
@@ -134,43 +136,53 @@ frontend = Frontend
       let (TBranch _div (VCons _
                   (VCons (TBranch __div (VCons _br VNil)) _))) = t1
 
-      -- warning: [-Woverlapping-patterns]
-      --     Pattern match has inaccessible right hand side
-      -- warning: [-Winaccessible-code]
-      --     Couldn't match type ‘'[T '[], T '[T '[]]]’ with ‘'[]’
-      -- let (TBranch _div' VNil) = t1
-
-      -- warning: [-Woverlapping-patterns]
-      --     Pattern match has inaccessible right hand side
-      -- warning: [-Winaccessible-code]
-      --     Couldn't match type ‘'[T '[]]’ with ‘'[]’
-      -- let (TBranch _div (VCons (TBranch _img VNil)
-      --             (VCons (TBranch __div VNil) VNil))) = t1
-
-      elTree (TLeaf $ el "br" blank) >>= \case
-        TLeaf br -> br
-
       {-
-      -- warning: [-Winaccessible-code, -Werror=inaccessible-code]
-      --     • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
-      elTree (TLeaf $ el "br" blank) >>= \case
-        TLeaf br -> br
-        TBranch _ _ -> pure ()
+         warning: [-Woverlapping-patterns]
+             Pattern match has inaccessible right hand side
+         warning: [-Winaccessible-code]
+             • Couldn't match type ‘'[T 'TTagBranch '[],
+                                      T 'TTagBranch '[T 'TTagBranch '[]]]’
+                              with ‘'[]’
+
+      let (TBranch _div' VNil) = t1
       -}
 
+      {-
+         warning: [-Woverlapping-patterns]
+             Pattern match has inaccessible right hand side
+         warning: [-Winaccessible-code]
+            • Couldn't match type ‘'[T 'TTagBranch '[]]’ with ‘'[]’
+
+      let (TBranch _div (VCons (TBranch _img VNil)
+                 (VCons (TBranch __div VNil) VNil))) = t1
+      -}
+      _ <- elTree (TLeaf $ el "br" blank)
+
+      elTree (TLeaf $ el "br" blank) >>= \case
+        TLeaf _br -> pure ()
+
+      {-
+        • Couldn't match expected type ‘p0’
+                      with actual type ‘Element EventResult (DomBuilderSpace m) t’
+            ‘p0’ is untouchable
+              inside the constraints: 'TTagLeaf ~ 'TTagBranch
+
+      t2 <- elTree (TLeaf $ el "br" blank)
+      let TBranch _node _children = t2
+     -}
+
       t3 <- elTree $ TBranch ("div", mempty)
-        $ VCons (TLeaf (0 :: Int))
         $ VCons (TBranch ("img", mempty) VNil)
-        $ VCons (TLeaf $ el "br" blank)
+        $ VCons (TLeaf $ el "br" $ pure (0 :: Int))
         $ VNil
 
       let
         (TBranch _div
-         (VCons (TLeaf _zero)
-          (VCons (TBranch _img VNil)
-           (VCons (TLeaf br')
-            VNil)))) = t3
-      br'
+         (VCons (TBranch _img VNil)
+          (VCons (TLeaf (Identity zero))
+           VNil))) = t3
+
+      text $ T.pack $ show $ zero
 
       pure ()
   }
