@@ -107,7 +107,7 @@ pattern Branch node children = TBranch node children
 -- Needed?
 -- {-# COMPLETE Nil #-}
 pattern Nil
-  :: V '[] T m a
+  :: V '[] T Identity a
 pattern Nil = VNil
 
 nil :: V '[] T m a
@@ -151,13 +151,13 @@ frontend = Frontend
 
 
       -- • Could not deduce MonadFail
---      (Branch div _) <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
+      -- Branch div _ <- elTree $ branch ("div", mempty) $ leaf (el "div" blank) :+ nil
 
       t1 <- elTree $ branch ("div", mempty) $ leaf (el "div" blank) :+ nil
       let Branch _div _ = t1
 
       t2 <- elTree $ branch ("div", mempty)
-        $ (leaf (el "img" blank))
+        $ leaf (el "img" blank)
         :+ branch ("div", mempty) (leaf (el "br" blank) :+ nil)
         :+ nil
 
@@ -173,7 +173,7 @@ frontend = Frontend
 
       {-
         • Couldn't match type ‘'TTagLeaf’ with ‘'TTagBranch’
-      t3 <- elTree (TLeaf $ el "br" blank)
+      t3 <- elTree (leaf $ el "br" blank)
       let Branch _node _children = t3
       -}
 
@@ -190,5 +190,4 @@ frontend = Frontend
 
       text $ T.pack $ show $ three
 
-      pure ()
   }
