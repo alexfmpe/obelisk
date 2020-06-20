@@ -40,14 +40,14 @@ import Data.Tree
 
 import Prelude hiding (div)
 
-data Const2 a m b = Const2 a
+data Atom a m b = Atom a
 
 data TTag
   = TTagLeaf
   | TTagBranch
 
 data T (tag :: TTag) (children :: [(* -> *) -> * -> *]) (m :: * -> *) (spine :: *) where
-  TLeaf :: m x -> T 'TTagLeaf '[Const2 x] m spine
+  TLeaf :: m x -> T 'TTagLeaf '[Atom x] m spine
   TBranch :: spine -> V (x ': xs) T m spine -> T 'TTagBranch (x ': xs) m spine
 
 deriving instance Functor (T tag children m)
@@ -84,7 +84,7 @@ elTree = \case
     (n, cs) <- elAttr' tg attrs $ traverseVT elTree xs
     pure $ TBranch n cs
 
-leaf :: m x -> T 'TTagLeaf '[Const2 x] m spine
+leaf :: m x -> T 'TTagLeaf '[Atom x] m spine
 leaf = TLeaf
 
 branch :: spine -> V (x ': xs) T m spine -> T 'TTagBranch (x ': xs) m spine
@@ -93,7 +93,7 @@ branch = TBranch
 {-# COMPLETE Leaf #-}
 pattern Leaf
   :: x
-  -> T 'TTagLeaf '[Const2 x] Identity spine
+  -> T 'TTagLeaf '[Atom x] Identity spine
 pattern Leaf x = TLeaf (Identity x)
 
 -- Needed?
