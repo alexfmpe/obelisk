@@ -90,12 +90,28 @@ pattern Leaf
   -> T 'TTagLeaf '[Const2 x] Identity spine
 pattern Leaf x = TLeaf (Identity x)
 
-{-# COMPLETE Branch #-}
+-- Needed?
+-- {-# COMPLETE Branch #-}
 pattern Branch
   :: spine
   -> V (x ': xs) T Identity spine
   -> T 'TTagBranch (x ': xs) Identity spine
 pattern Branch node children = TBranch node children
+
+-- Needed?
+-- {-# COMPLETE Nil #-}
+pattern Nil
+  :: V '[] T m a
+pattern Nil = VNil
+
+nil :: V '[] T m a
+nil = VNil
+
+-- Mirrors https://developer.mozilla.org/en-US/docs/Web/CSS/Adjacent_sibling_combinator
+pattern (:+) :: T tag xs m a -> V xss T m a -> V (T tag xs : xss) T m a
+pattern h :+ t = VCons h t
+infixr 5 :+
+
 
 -- This runs in a monad that can be run on the client or the server.
 -- To run code in a pure client or pure server context, use one of the
@@ -131,16 +147,18 @@ frontend = Frontend
       -- • Could not deduce MonadFail
 --      (Branch div _) <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
 
-      t1 <- elTree $ TBranch ("div", mempty) $ VCons (TLeaf $ el "div" blank) $ VNil
+      t1 <- elTree $ TBranch ("div", mempty) $ TLeaf (el "div" blank) :+ nil
       let Branch _div _ = t1
 
       t2 <- elTree $ TBranch ("div", mempty)
-        $ VCons (TLeaf (el "img" blank))
-        $ VCons (TBranch ("div", mempty) (VCons (TLeaf (el "br" blank)) VNil))
-        VNil
+        $ (TLeaf (el "img" blank))
+        :+ TBranch ("div", mempty) (TLeaf (el "br" blank) :+ nil)
+        :+ nil
 
-      let (Branch _div (VCons (Leaf ())
-                  (VCons (Branch __div (VCons _br VNil)) VNil))) = t2
+      let Branch _div
+            (Leaf ()
+             :+ Branch __div (_br :+ Nil)
+             :+ Nil) = t2
 
       {-
         • Couldn't match type ‘'TTagBranch’ with ‘'TTagLeaf’
@@ -154,15 +172,15 @@ frontend = Frontend
       -}
 
       t4 <- elTree $ TBranch ("div", mempty)
-        $ VCons (TLeaf (el "img" blank))
-        $ VCons (TLeaf $ el "br" $ pure (3 :: Int))
-        $ VNil
+        $  TLeaf (el "img" blank)
+        :+ TLeaf (el "br" $ pure (3 :: Int))
+        :+ nil
 
       let
         (Branch _div
-         (VCons (Leaf ())
-          (VCons (Leaf three)
-           VNil))) = t4
+         (Leaf ()
+          :+ Leaf three
+          :+ Nil)) = t4
 
       text $ T.pack $ show $ three
 
