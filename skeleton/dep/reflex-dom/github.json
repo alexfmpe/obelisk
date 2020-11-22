@@ -1,8 +1,8 @@
 {
-  "owner": "reflex-frp",
+  "owner": "alexfmpe",
   "repo": "reflex-dom",
-  "branch": "develop",
+  "branch": "test-new-workflows",
   "private": false,
-  "rev": "27720c0b3866b109739177968a345a465107abd2",
-  "sha256": "0grdf388bi6xk0qimqyh1yjnzcq93azw2jnbqqmz8kw901xglzx9"
+  "rev": "f716639ac63282e59e5ab8735c68bd24c66c1a9c",
+  "sha256": "16nxv21l4z40svcxrzlwk0gqfnf0l351p9cia1n5z9qrk43j0nhd"
 }

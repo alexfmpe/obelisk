@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -9,15 +10,12 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Frontend where
 
 import Control.Monad (when, (<=<))
 import Control.Monad.Fix (MonadFix)
-import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT)
-import Data.Witherable (catMaybes)
 import Data.Functor (void)
 import Data.Functor.Bind (Apply(..))
 import Data.Hourglass (Month(..), daysInMonth)
@@ -29,20 +27,6 @@ import Obelisk.Route.Frontend
 import Reflex.Dom.Core
 
 import Common.Route
-
---------------------------------------------------------------------------------
--- Workflow
---------------------------------------------------------------------------------
--- | Similar to 'runWorkflow' but combines the result into a 'Dynamic'.
-workflow :: (Adjustable t m, MonadFix m, MonadHold t m) => Workflow t m a -> m (Dynamic t a)
-workflow = uncurry holdDyn <=< runWorkflow
-
--- | Similar to 'runWorkflow', but also puts the initial value in the 'Event'.
-workflowView :: (Adjustable t m, MonadFix m, MonadHold t m, PostBuild t m) => Workflow t m a -> m (Event t a)
-workflowView w = do
-  postBuildEv <- getPostBuild
-  (initialValue, replaceEv) <- runWorkflow w
-  pure $ leftmost [initialValue <$ postBuildEv, replaceEv]
 
 --------------------------------------------------------------------------------
 -- Utils
@@ -107,59 +91,103 @@ frontend = Frontend
           br
           pure $ leftmost [a,b]
 
+        choiceFork x = el "div" $ do
+          a <- btn $ x <> ".A"
+          b <- btn $ x <> ".B"
+          ab <- btn $ x <> ".*"
+          z <- btn "Stop"
+          br
+          pure $ leftmost [a,b,ab,z]
+
         controls = do
           yes <- button "Replay"
-          no <- button "Stop"
+          no <- button "Continue"
+          stopEv <- button "Stop"
           br
-          pure $ leftmost [True <$ yes, False <$ no]
+          pure $ leftmost [Just True <$ yes, Just False <$ no, Nothing <$ stopEv]
 
         choices mkControls mkLayer = do
           start <- replay
           x0 <- mkLayer "0"
           x1 <- mkLayer x0
+          mkControls >>= \case
+            Just True -> start
+            Just False -> pure ()
+            Nothing -> stop
           x2 <- mkLayer x1
           x3 <- mkLayer x2
-          again <- mkControls
-          when again
-            start
           pure x3
 
-        frameIncremental :: (Adjustable t m, MonadHold t m, PostBuild t m) => m (Event t a) -> Stack t m (Maybe a)
-        frameIncremental = frame . fmap (\ev -> (Nothing, fmap Just ev))
+        machineInstant a ma = machine $ do
+          pb <- getPostBuild
+          ev <- ma
+          pure $ leftmost [a <$ pb, ev]
 
       example "Wizard" $
-        justShow <=< runWizard $ choices (step controls) (step . choice)
+        justShow <=< runWizard $ choices (machine controls) (machine . choice)
 
-      example "Stack: fixed layers" $
-        display <=< stackHold $ choices
-          (frame . fmap (False,) $ controls)
-          (frame . fmap ("_",) . choiceFade)
+      example "Stack" $
+        justShow <=< runStack $ choices
+          (machine controls)
+          (machine . choice)
 
-      example "Stack: incremental layers via MaybeT" $
-        display <=< stackHold $ runMaybeT $ choices
-          (MaybeT . frameIncremental $ controls)
-          (MaybeT . frameIncremental . choice)
+      example "DFS" $
+        justShow <=< runDFS $ choices
+          (machine controls)
+          (machine . choice)
 
-      example "Wizard of incremental stacks" $ do
+      example "Wizard: postBuild" $
+        justShow <=< runWizard $ pure "_"
+
+      example "Stack: postBuild" $
+        justShow <=< runStack $ choices
+          (machine controls)
+          (machineInstant "_" . choiceFade)
+
+      example "Wizard of stacks" $ do
         justShow <=< runWizard $ do
-          x <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices (pure False) $ MaybeT . frameIncremental . choice
-          y <- step $ fmap catMaybes $ stackView $ runMaybeT $ choices (pure False) $ MaybeT . frameIncremental . choice
+          x <- machine $ runStack $ choices (pure $ Just False) $ machine . choice
+          y <- machine $ runStack $ choices (pure $ Just False) $ machine . choice
           pure (x,y)
 
       example "Stack of workflows" $ mdo
-         ymd <- stackHold $ do
-           y <- frame . runWorkflow $ year clk 2000
-           m <- frame . runWorkflow $ month clk January
-           d <- frame . runWorkflow $ day clk y m 27
-           pure (y,m,d)
-         dynText $ ffor ymd $ \(y,m,d) -> T.intercalate "-" [tshow y, tshow m, tshow d]
-         br
-         display =<< count @_ @_ @Int (updated ymd)
-         clk <- if True
-           then pure never
-           else do
-           text " replacements"
-           br
-           button "trigger all simultaneously"
-         pure ()
+        ymd <- runStack $ do
+          y <- machine . workflowView $ year clk 2000
+          m <- machine . workflowView $ month clk January
+          d <- machine . workflowView $ day clk y m 27
+          pure (y,m,d)
+        widgetHold blank $ ffor ymd $ \(y,m,d) -> text $ T.intercalate "-" [tshow y, tshow m, tshow d]
+        br
+        display =<< count @_ @_ @Int ymd
+        clk <- if True
+          then pure never
+          else do
+          text " replacements"
+          br
+          button "trigger all simultaneously"
+        pure ()
+
+      example "Forking the timelines" $ do
+        let
+          choices' mkControls mkLayer mkFork = do
+            start <- replay
+            x0 <- mkFork "0"
+            x0' <- if ".*" `T.isSuffixOf` x0
+                   then fork "0.A" "0.B"
+                   else pure x0
+
+            x1 <- mkLayer x0'
+            mkControls >>= \case
+              Just True -> start
+              Just False -> pure ()
+              Nothing -> stop
+            x2 <- mkLayer x1
+            x3 <- mkLayer x2
+            pure x3
+
+        let w = choices' (machine controls) (machine . choice) (machine . choiceFork)
+            s = choices' (machine controls) (machine . choice) (machine . choiceFork)
+
+        example "Wizard fork" $ justShow <=< runWizard $ w
+        example "Stack fork" $ justShow <=< runStack $ s
   }
