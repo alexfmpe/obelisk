@@ -23,6 +23,7 @@ import qualified Data.Binary.Put as Binary
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as ByteString
 import Data.Foldable
+import Data.Functor.Identity
 import Data.HexString
 import Data.Semigroupoid
 import Data.Text (Text)
@@ -127,7 +128,19 @@ instance (Semigroupoid c, Category c) => Category (Categoryish m c) where
 
 newtype Putish a = Putish { unPutish :: a -> Binary.Put }
 newtype Getish a = Getish { unGetish :: Binary.Get a }
--- type HaskEncoder check a b = Encoder check (Categoryish BinaryEncoding (->)) (Categoryish BinaryEncoding (->))
+
+decode :: Encoder Identity decode encode decoded encoded -> decode encoded decoded
+decode (Encoder (Identity impl)) = _encoderImpl_decode impl
+
+encode :: Encoder Identity decode encode decoded encoded -> encode decoded encoded
+encode (Encoder (Identity impl)) = _encoderImpl_encode impl
+
+encodeHask :: Format a -> (a -> ByteString)
+encodeHask f = Binary.runPut . toPut (encode $ encoderHask f)
+
+decodeHask :: Format a -> (ByteString -> a)
+decodeHask f = Binary.runGet $ toGet (decode $ encoderHask f)
+
 encoderHask :: Applicative check => Format a -> Encoder check (Categoryish Getish (->)) (Categoryish Putish (->)) a ByteString
 encoderHask = \case
   Format_Byte -> unsafeMkEncoder $ EncoderImpl
@@ -176,18 +189,18 @@ encoderHask = \case
           n <- toGet (_encoderImpl_decode en)
           replicateM (fromIntegral n) (toGet (_encoderImpl_decode ea))
       }
-  where
-    fromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
-    fromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
 
-    fromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
-    fromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
+fromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
+fromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
 
-    toPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
-    toPut (Categoryish_ImplicitTarget _ (Putish p)) = p
+fromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
+fromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
 
-    toGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
-    toGet (Categoryish_ImplicitSource _ (Getish g)) = g
+toPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
+toPut (Categoryish_ImplicitTarget _ (Putish p)) = p
+
+toGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
+toGet (Categoryish_ImplicitSource _ (Getish g)) = g
 
 
 newtype Parse parsed a b = Parse { unParse :: a -> parsed b }
@@ -202,46 +215,6 @@ parseBinary :: Binary.Get a -> ByteString -> Either Text a
 parseBinary x bs = case Binary.runGetOrFail x bs of
   Left (_rest, _, err) -> Left (T.pack err)
   Right (_rest, _, a) -> Right a
-
-encodeHask :: Format a -> (a -> ByteString)
-encodeHask f = Binary.runPut . (_binaryEncoding_put $ encodingHask f)
-
-decodeHask :: Format a -> (ByteString -> a)
-decodeHask = Binary.runGet . _binaryEncoding_get . encodingHask
-
-encodingHask :: Format a -> BinaryEncoding a
-encodingHask = uncurry BinaryEncoding . \case
-  Format_Byte -> (Binary.get, Binary.put)
-  Format_Magic bs -> (dec, enc)
-    where
-      dec = do
-        bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
-        when (bs' /= ByteString.toStrict bs) $ error "derp"
-      enc () = Binary.putByteString $ ByteString.toStrict bs
-  Format_Product fa fb -> (dec, enc)
-    where
-      dec = pure (,) <*> get fa <*> get fb
-      enc (a,b) = put fa a *> put fb b
-  Format_Sum fa fb -> (dec, enc)
-    where
-      dec = Binary.getWord8 >>= \case
-        0 -> Left <$> get fa
-        1 -> Right <$> get fb
-        _ -> error "derp"
-      enc = \case
-        Left a -> Binary.putWord8 0 *> put fa a
-        Right b -> Binary.putWord8 1 *> put fb b
-  Format_Replicate fn fa -> (dec, enc)
-    where
-      dec = do
-        n <- get fn
-        replicateM (fromIntegral n) (get fa)
-      enc as = do
-        put fn (fromIntegral $ length as)
-        for_ as $ put fa
-  where
-    get = _binaryEncoding_get . encodingHask
-    put = _binaryEncoding_put . encodingHask
 
 decodeRust :: Format a -> Text
 decodeRust f = snd $ runWriter $ flip runReaderT 0 $ do
