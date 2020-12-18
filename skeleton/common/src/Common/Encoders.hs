@@ -136,71 +136,71 @@ encode :: Encoder Identity decode encode decoded encoded -> encode decoded encod
 encode (Encoder (Identity impl)) = _encoderImpl_encode impl
 
 encodeHask :: Format a -> (a -> ByteString)
-encodeHask f = Binary.runPut . toPut (encode $ encoderHask f)
+encodeHask f = Binary.runPut . encodeToPut (encode $ encoderHask f)
 
 decodeHask :: Format a -> (ByteString -> a)
-decodeHask f = Binary.runGet $ toGet (decode $ encoderHask f)
+decodeHask f = Binary.runGet $ encodeToGet (decode $ encoderHask f)
 
 encoderHask :: Applicative check => Format a -> Encoder check (Categoryish Getish (->)) (Categoryish Putish (->)) a ByteString
 encoderHask = \case
   Format_Byte -> unsafeMkEncoder $ EncoderImpl
-    { _encoderImpl_decode = fromGet Binary.getWord8
-    , _encoderImpl_encode = fromPut Binary.putWord8
+    { _encoderImpl_decode = decodeFromGet Binary.getWord8
+    , _encoderImpl_encode = encodeFromPut Binary.putWord8
     }
   Format_Magic bs -> unsafeMkEncoder $ EncoderImpl
-    { _encoderImpl_decode = fromGet $ do
+    { _encoderImpl_decode = decodeFromGet $ do
         bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
         when (bs' /= ByteString.toStrict bs) $ error "derp"
-    , _encoderImpl_encode = fromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
+    , _encoderImpl_encode = encodeFromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
     }
   Format_Product fa fb -> Encoder $ do
     ea <- unEncoder $ encoderHask fa
     eb <- unEncoder $ encoderHask fb
     pure $ EncoderImpl
-      { _encoderImpl_encode = fromPut $ \(a,b) -> do
-          toPut (_encoderImpl_encode ea) a
-          toPut (_encoderImpl_encode eb) b
-      , _encoderImpl_decode = fromGet $ do
-          a <- toGet (_encoderImpl_decode ea)
-          b <- toGet (_encoderImpl_decode eb)
+      { _encoderImpl_encode = encodeFromPut $ \(a,b) -> do
+          encodeToPut (_encoderImpl_encode ea) a
+          encodeToPut (_encoderImpl_encode eb) b
+      , _encoderImpl_decode = decodeFromGet $ do
+          a <- encodeToGet (_encoderImpl_decode ea)
+          b <- encodeToGet (_encoderImpl_decode eb)
           pure (a,b)
       }
   Format_Sum fa fb -> Encoder $ do
     ea <- unEncoder $ encoderHask fa
     eb <- unEncoder $ encoderHask fb
     pure $ EncoderImpl
-      { _encoderImpl_encode = fromPut $ \case
-          Left a -> Binary.putWord8 0 *> toPut (_encoderImpl_encode ea) a
-          Right b -> Binary.putWord8 1 *> toPut (_encoderImpl_encode eb) b
-      , _encoderImpl_decode = fromGet $ do
+      { _encoderImpl_encode = encodeFromPut $ \case
+          Left a -> Binary.putWord8 0 *> encodeToPut (_encoderImpl_encode ea) a
+          Right b -> Binary.putWord8 1 *> encodeToPut (_encoderImpl_encode eb) b
+      , _encoderImpl_decode = decodeFromGet $ do
           Binary.getWord8 >>= \case
-            0 -> Left <$> toGet (_encoderImpl_decode ea)
-            1 -> Right <$> toGet (_encoderImpl_decode eb)
+            0 -> Left <$> encodeToGet (_encoderImpl_decode ea)
+            1 -> Right <$> encodeToGet (_encoderImpl_decode eb)
             _ -> error "derp"
       }
   Format_Replicate fn fa -> Encoder $ do
     en <- unEncoder $ encoderHask fn
     ea <- unEncoder $ encoderHask fa
     pure $ EncoderImpl
-      { _encoderImpl_encode = fromPut $ \as -> do
-          toPut (_encoderImpl_encode en) (fromIntegral $ length as)
-          for_ as $ toPut (_encoderImpl_encode ea)
-      , _encoderImpl_decode = fromGet $ do
-          n <- toGet (_encoderImpl_decode en)
-          replicateM (fromIntegral n) (toGet (_encoderImpl_decode ea))
+      { _encoderImpl_encode = encodeFromPut $ \as -> do
+          encodeToPut (_encoderImpl_encode en) (fromIntegral $ length as)
+          for_ as $ encodeToPut (_encoderImpl_encode ea)
+      , _encoderImpl_decode = decodeFromGet $ do
+          n <- encodeToGet (_encoderImpl_decode en)
+          replicateM (fromIntegral n) (encodeToGet (_encoderImpl_decode ea))
       }
 
-fromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
-fromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
+decodeFromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
+decodeFromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
 
-fromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
-fromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
+encodeFromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
+encodeFromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
 
-toPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
-toPut (Categoryish_ImplicitTarget _ (Putish p)) = p
+encodeToPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
+encodeToPut (Categoryish_ImplicitTarget _ (Putish p)) = p
 
-toGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
-toGet (Categoryish_ImplicitSource _ (Getish g)) = g
+encodeToGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
+encodeToGet (Categoryish_ImplicitSource _ (Getish g)) = g
 
 
 newtype Parse parsed a b = Parse { unParse :: a -> parsed b }
