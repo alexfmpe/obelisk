@@ -141,18 +141,41 @@ encoderHask = \case
     , _encoderImpl_encode = fromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
     }
   Format_Product fa fb -> Encoder $ do
-    ha <- unEncoder $ encoderHask fa
-    hb <- unEncoder $ encoderHask fb
+    ea <- unEncoder $ encoderHask fa
+    eb <- unEncoder $ encoderHask fb
     pure $ EncoderImpl
       { _encoderImpl_encode = fromPut $ \(a,b) -> do
-          toPut (_encoderImpl_encode ha) a
-          toPut (_encoderImpl_encode hb) b
+          toPut (_encoderImpl_encode ea) a
+          toPut (_encoderImpl_encode eb) b
       , _encoderImpl_decode = fromGet $ do
-          a <- toGet (_encoderImpl_decode ha)
-          b <- toGet (_encoderImpl_decode hb)
+          a <- toGet (_encoderImpl_decode ea)
+          b <- toGet (_encoderImpl_decode eb)
           pure (a,b)
       }
-
+  Format_Sum fa fb -> Encoder $ do
+    ea <- unEncoder $ encoderHask fa
+    eb <- unEncoder $ encoderHask fb
+    pure $ EncoderImpl
+      { _encoderImpl_encode = fromPut $ \case
+          Left a -> Binary.putWord8 0 *> toPut (_encoderImpl_encode ea) a
+          Right b -> Binary.putWord8 1 *> toPut (_encoderImpl_encode eb) b
+      , _encoderImpl_decode = fromGet $ do
+          Binary.getWord8 >>= \case
+            0 -> Left <$> toGet (_encoderImpl_decode ea)
+            1 -> Right <$> toGet (_encoderImpl_decode eb)
+            _ -> error "derp"
+      }
+  Format_Replicate fn fa -> Encoder $ do
+    en <- unEncoder $ encoderHask fn
+    ea <- unEncoder $ encoderHask fa
+    pure $ EncoderImpl
+      { _encoderImpl_encode = fromPut $ \as -> do
+          toPut (_encoderImpl_encode en) (fromIntegral $ length as)
+          for_ as $ toPut (_encoderImpl_encode ea)
+      , _encoderImpl_decode = fromGet $ do
+          n <- toGet (_encoderImpl_decode en)
+          replicateM (fromIntegral n) (toGet (_encoderImpl_decode ea))
+      }
   where
     fromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
     fromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
@@ -166,8 +189,6 @@ encoderHask = \case
     toGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
     toGet (Categoryish_ImplicitSource _ (Getish g)) = g
 
---  Format_Sum fn fa ->
---  Format_Replicate fn fa ->
 
 newtype Parse parsed a b = Parse { unParse :: a -> parsed b }
 instance Monad parsed => Category (Parse parsed) where
