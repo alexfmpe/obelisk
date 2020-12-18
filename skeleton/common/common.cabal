@@ -9,6 +9,7 @@ library
                , obelisk-route
                , hexstring
                , mtl
+               , semigroupoids
                , text
   exposed-modules:
     Common.Api

@@ -1,11 +1,19 @@
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
 module Common.Encoders where
 
+import Control.Arrow
+import Control.Category
+--import qualified Control.Categorical.Functor as Cat
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -16,9 +24,11 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as ByteString
 import Data.Foldable
 import Data.HexString
+import Data.Semigroupoid
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word
+import Prelude hiding (id, (.))
 
 type SomeData = Either () () :. Word8 :. Either () Word8 :. [Word8]
 
@@ -85,42 +95,132 @@ data EncoderImpl decode encode decoded encoded = EncoderImpl
   { _encoderImpl_decode :: !(decode encoded decoded)
   , _encoderImpl_encode :: !(encode decoded encoded)
   }
+instance (Category decode, Category encode) => Category (EncoderImpl decode encode) where
+  id = EncoderImpl id id
+  f . g = EncoderImpl
+    (_encoderImpl_decode f >>> _encoderImpl_decode g)
+    (_encoderImpl_encode f <<< _encoderImpl_encode g)
 
-mkHaskBinaryEncoder :: Applicative check => Format a -> Encoder check (->) (->) a ByteString
-mkHaskBinaryEncoder = unsafeMkEncoder . (pure EncoderImpl <*> decodeHask <*> encodeHask)
 
-encodeHask :: Format a -> (a -> ByteString)
-encodeHask f = Binary.runPut . go f
-  where
-    go :: Format a -> (a -> Binary.Put)
-    go = \case
-      Format_Magic bs -> \() -> Binary.putByteString $ ByteString.toStrict bs
-      Format_Byte -> Binary.put
-      Format_Product fa fb -> \(a,b) -> go fa a *> go fb b
-      Format_Sum fa fb -> \case
-        Left a -> Binary.putWord8 0 *> go fa a
-        Right b -> Binary.putWord8 1 *> go fb b
-      Format_Replicate fn fa -> \as -> do
-        go fn (fromIntegral $ length as)
-        for_ as $ go fa
+data BinaryEncoding a where
+  BinaryEncoding :: { _binaryEncoding_get :: Binary.Get a
+                    , _binaryEncoding_put :: (a -> Binary.Put)
+                    }
+                 -> BinaryEncoding a
 
-decodeHask :: Format a -> (ByteString -> a)
-decodeHask = Binary.runGet . go
-  where
-    go :: Format a -> Binary.Get a
-    go = \case
-      Format_Magic bs -> do
+data Categoryish m c a b where
+  Categoryish_Explicit :: c a b -> Categoryish m c a b
+  Categoryish_ImplicitSource :: (forall x. m x -> c a x) -> m b -> Categoryish m c a b
+  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish m c a b
+
+instance Semigroupoid c => Semigroupoid (Categoryish m c) where
+  b2c `o` a2b = Categoryish_Explicit $ explicit b2c `o` explicit a2b
+    where
+      explicit = \case
+        Categoryish_Explicit c -> c
+        Categoryish_ImplicitSource f m -> f m
+        Categoryish_ImplicitTarget f m -> f m
+
+instance (Semigroupoid c, Category c) => Category (Categoryish m c) where
+  id = Categoryish_Explicit id
+  (.) = o
+
+newtype Putish a = Putish { unPutish :: a -> Binary.Put }
+newtype Getish a = Getish { unGetish :: Binary.Get a }
+-- type HaskEncoder check a b = Encoder check (Categoryish BinaryEncoding (->)) (Categoryish BinaryEncoding (->))
+encoderHask :: Applicative check => Format a -> Encoder check (Categoryish Getish (->)) (Categoryish Putish (->)) a ByteString
+encoderHask = \case
+  Format_Byte -> unsafeMkEncoder $ EncoderImpl
+    { _encoderImpl_decode = fromGet Binary.getWord8
+    , _encoderImpl_encode = fromPut Binary.putWord8
+    }
+  Format_Magic bs -> unsafeMkEncoder $ EncoderImpl
+    { _encoderImpl_decode = fromGet $ do
         bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
         when (bs' /= ByteString.toStrict bs) $ error "derp"
-      Format_Byte -> Binary.get
-      Format_Product fa fb -> pure (,) <*> go fa <*> go fb
-      Format_Sum fa fb -> Binary.getWord8 >>= \case
-        0 -> Left <$> go fa
-        1 -> Right <$> go fb
+    , _encoderImpl_encode = fromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
+    }
+  Format_Product fa fb -> Encoder $ do
+    ha <- unEncoder $ encoderHask fa
+    hb <- unEncoder $ encoderHask fb
+    pure $ EncoderImpl
+      { _encoderImpl_encode = fromPut $ \(a,b) -> do
+          toPut (_encoderImpl_encode ha) a
+          toPut (_encoderImpl_encode hb) b
+      , _encoderImpl_decode = fromGet $ do
+          a <- toGet (_encoderImpl_decode ha)
+          b <- toGet (_encoderImpl_decode hb)
+          pure (a,b)
+      }
+
+  where
+    fromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
+    fromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
+
+    fromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
+    fromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
+
+    toPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
+    toPut (Categoryish_ImplicitTarget _ (Putish p)) = p
+
+    toGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
+    toGet (Categoryish_ImplicitSource _ (Getish g)) = g
+
+--  Format_Sum fn fa ->
+--  Format_Replicate fn fa ->
+
+newtype Parse parsed a b = Parse { unParse :: a -> parsed b }
+instance Monad parsed => Category (Parse parsed) where
+  id = Parse pure
+  f . g = Parse $ unParse f <=< unParse g
+instance Monad parsed => Arrow (Parse parsed) where
+  arr f = Parse $ pure . f
+  first (Parse f) = Parse $ \(a,b) -> fmap (,b) (f a)
+
+parseBinary :: Binary.Get a -> ByteString -> Either Text a
+parseBinary x bs = case Binary.runGetOrFail x bs of
+  Left (_rest, _, err) -> Left (T.pack err)
+  Right (_rest, _, a) -> Right a
+
+encodeHask :: Format a -> (a -> ByteString)
+encodeHask f = Binary.runPut . (_binaryEncoding_put $ encodingHask f)
+
+decodeHask :: Format a -> (ByteString -> a)
+decodeHask = Binary.runGet . _binaryEncoding_get . encodingHask
+
+encodingHask :: Format a -> BinaryEncoding a
+encodingHask = uncurry BinaryEncoding . \case
+  Format_Byte -> (Binary.get, Binary.put)
+  Format_Magic bs -> (dec, enc)
+    where
+      dec = do
+        bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
+        when (bs' /= ByteString.toStrict bs) $ error "derp"
+      enc () = Binary.putByteString $ ByteString.toStrict bs
+  Format_Product fa fb -> (dec, enc)
+    where
+      dec = pure (,) <*> get fa <*> get fb
+      enc (a,b) = put fa a *> put fb b
+  Format_Sum fa fb -> (dec, enc)
+    where
+      dec = Binary.getWord8 >>= \case
+        0 -> Left <$> get fa
+        1 -> Right <$> get fb
         _ -> error "derp"
-      Format_Replicate fn fa -> do
-        n <- go fn
-        replicateM (fromIntegral n) (go fa)
+      enc = \case
+        Left a -> Binary.putWord8 0 *> put fa a
+        Right b -> Binary.putWord8 1 *> put fb b
+  Format_Replicate fn fa -> (dec, enc)
+    where
+      dec = do
+        n <- get fn
+        replicateM (fromIntegral n) (get fa)
+      enc as = do
+        put fn (fromIntegral $ length as)
+        for_ as $ put fa
+  where
+    get = _binaryEncoding_get . encodingHask
+    put = _binaryEncoding_put . encodingHask
 
 decodeRust :: Format a -> Text
 decodeRust f = snd $ runWriter $ flip runReaderT 0 $ do
