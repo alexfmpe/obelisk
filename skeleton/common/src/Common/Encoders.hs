@@ -127,20 +127,27 @@ instance (Category decode, Category encode) => Category (EncoderImpl decode enco
     (_encoderImpl_decode f >>> _encoderImpl_decode g)
     (_encoderImpl_encode f <<< _encoderImpl_encode g)
 
-data Categoryish_ImplicitSource m c a b where
-  Categoryish_ImplicitSource :: (forall x. m x -> c a x) -> m b -> Categoryish_ImplicitSource m c a b
-data Categoryish_ImplicitTarget m c a b where
-  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish_ImplicitTarget m c a b
+data Implicitness
+  = ImplicitSource
+  | ImplicitTarget
 
-instance Semigroupoid c => Semigroupoid (Categoryish_ImplicitSource m c) where
-  Categoryish_ImplicitSource b2c mc `o` Categoryish_ImplicitSource a2b mb =
-    Categoryish_ImplicitSource (\m -> b2c m `o` a2b mb) mc
-instance Semigroupoid c => Semigroupoid (Categoryish_ImplicitTarget m c) where
-  Categoryish_ImplicitTarget b2c mb `o` Categoryish_ImplicitTarget a2b ma =
-    Categoryish_ImplicitTarget (\m -> b2c mb `o` a2b m) ma
+data Categoryish (x :: Implicitness) m c a b where
+  Categoryish_ImplicitSource :: (forall x. m x -> c a x) -> m b -> Categoryish 'ImplicitSource m c a b
+  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish 'ImplicitTarget m c a b
 
-type DecodeViaGet = Categoryish_ImplicitSource Binary.Get      Parse
-type EncodeViaPut = Categoryish_ImplicitTarget (Op Binary.Put) (->)
+explicit :: Categoryish x m c a b -> c a b
+explicit = \case
+  Categoryish_ImplicitSource a2x mb -> a2x mb
+  Categoryish_ImplicitTarget x2b ma -> x2b ma
+
+instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitSource m c) where
+  Categoryish_ImplicitSource b2c mc `o` a2b = Categoryish_ImplicitSource (\m -> b2c m `o` explicit a2b) mc
+
+instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitTarget m c) where
+  b2c `o` Categoryish_ImplicitTarget a2b ma = Categoryish_ImplicitTarget (\m -> explicit b2c `o` a2b m) ma
+
+type DecodeViaGet = Categoryish 'ImplicitSource Binary.Get      Parse
+type EncodeViaPut = Categoryish 'ImplicitTarget (Op Binary.Put) (->)
 
 decode :: Encoder Identity decode encode decoded encoded -> decode encoded decoded
 decode (Encoder (Identity impl)) = _encoderImpl_decode impl
