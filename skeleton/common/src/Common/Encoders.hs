@@ -102,29 +102,17 @@ instance (Category decode, Category encode) => Category (EncoderImpl decode enco
     (_encoderImpl_decode f >>> _encoderImpl_decode g)
     (_encoderImpl_encode f <<< _encoderImpl_encode g)
 
+data Categoryish_ImplicitSource m c a b where
+  Categoryish_ImplicitSource  :: (forall x. m x -> c a x) -> m b -> Categoryish_ImplicitSource m c a b
+data Categoryish_ImplicitTarget m c a b where
+  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish_ImplicitTarget m c a b
 
-data BinaryEncoding a where
-  BinaryEncoding :: { _binaryEncoding_get :: Binary.Get a
-                    , _binaryEncoding_put :: (a -> Binary.Put)
-                    }
-                 -> BinaryEncoding a
-
-data Categoryish m c a b where
-  Categoryish_Explicit :: c a b -> Categoryish m c a b
-  Categoryish_ImplicitSource :: (forall x. m x -> c a x) -> m b -> Categoryish m c a b
-  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish m c a b
-
-instance Semigroupoid c => Semigroupoid (Categoryish m c) where
-  b2c `o` a2b = Categoryish_Explicit $ explicit b2c `o` explicit a2b
-    where
-      explicit = \case
-        Categoryish_Explicit c -> c
-        Categoryish_ImplicitSource f m -> f m
-        Categoryish_ImplicitTarget f m -> f m
-
-instance (Semigroupoid c, Category c) => Category (Categoryish m c) where
-  id = Categoryish_Explicit id
-  (.) = o
+instance Semigroupoid c => Semigroupoid (Categoryish_ImplicitSource m c) where
+  Categoryish_ImplicitSource fbc mc `o` Categoryish_ImplicitSource fab mb =
+    Categoryish_ImplicitSource (\m -> fbc m `o` fab mb) mc
+instance Semigroupoid c => Semigroupoid (Categoryish_ImplicitTarget m c) where
+  Categoryish_ImplicitTarget fbc mb `o` Categoryish_ImplicitTarget fab ma =
+    Categoryish_ImplicitTarget (\m -> fbc mb `o` fab m) ma
 
 newtype Putish a = Putish { unPutish :: a -> Binary.Put }
 newtype Getish a = Getish { unGetish :: Binary.Get a }
@@ -141,7 +129,14 @@ encodeHask f = Binary.runPut . encodeToPut (encode $ encoderHask f)
 decodeHask :: Format a -> (ByteString -> a)
 decodeHask f = Binary.runGet $ encodeToGet (decode $ encoderHask f)
 
-encoderHask :: Applicative check => Format a -> Encoder check (Categoryish Getish (->)) (Categoryish Putish (->)) a ByteString
+encoderHask
+  :: Applicative check
+  => Format a
+  -> Encoder check
+      (Categoryish_ImplicitSource Getish (->))
+      (Categoryish_ImplicitTarget Putish (->))
+      a
+      ByteString
 encoderHask = \case
   Format_Byte -> unsafeMkEncoder $ EncoderImpl
     { _encoderImpl_decode = decodeFromGet Binary.getWord8
@@ -190,16 +185,16 @@ encoderHask = \case
           replicateM (fromIntegral n) (encodeToGet (_encoderImpl_decode ea))
       }
 
-decodeFromGet :: forall x. Binary.Get x -> Categoryish Getish (->) ByteString x
+decodeFromGet :: forall x. Binary.Get x -> Categoryish_ImplicitSource Getish (->) ByteString x
 decodeFromGet = Categoryish_ImplicitSource (\g -> Binary.runGet (unGetish g)) . Getish
 
-encodeFromPut :: forall x. (x -> Binary.Put) -> Categoryish Putish (->) x ByteString
+encodeFromPut :: forall x. (x -> Binary.Put) -> Categoryish_ImplicitTarget Putish (->) x ByteString
 encodeFromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . unPutish p) . Putish
 
-encodeToPut :: forall x. Categoryish Putish (->) x ByteString -> (x -> Binary.Put)
+encodeToPut :: forall x. Categoryish_ImplicitTarget Putish (->) x ByteString -> (x -> Binary.Put)
 encodeToPut (Categoryish_ImplicitTarget _ (Putish p)) = p
 
-encodeToGet :: forall x. Categoryish Getish (->) ByteString x -> Binary.Get x
+encodeToGet :: forall x. Categoryish_ImplicitSource Getish (->) ByteString x -> Binary.Get x
 encodeToGet (Categoryish_ImplicitSource _ (Getish g)) = g
 
 
