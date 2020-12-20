@@ -1,6 +1,8 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -20,6 +22,7 @@ import Control.Arrow
 import Control.Category
 --import qualified Control.Categorical.Functor as Cat
 import Control.Monad
+import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 import qualified Data.Binary as Binary
@@ -34,13 +37,18 @@ import Data.Functor.Identity
 import Data.Int
 import Data.List
 import Data.HexString
+import Data.Maybe
 import Data.Semigroupoid
+import Data.Universe
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word
 import GHC.Generics (Generic)
 import Prelude hiding (id, (.))
 type SomeData = Either () () :. Word8 :. Either () Word8 :. [Word8]
+
+tshow :: Show a => a -> Text
+tshow = T.pack . show
 
 test :: IO ()
 test = do
@@ -111,16 +119,61 @@ optional f = Format_Sum epsilon f
 epsilon :: Format ()
 epsilon = Format_Magic ""
 
-unsafeMkEncoder :: Applicative check => EncoderImpl decode encode decoded encoded -> Encoder check decode encode decoded encoded
-unsafeMkEncoder impl = Encoder (pure impl)
+--newtype Const2 a b c = Const2 { unConst2 :: a }
+--newtype
 
-newtype Encoder check decode encode decoded encoded =
-  Encoder { unEncoder :: check (EncoderImpl decode encode decoded encoded) }
+{-
+shadowEncoderImpl
+  :: Encoder spec check decode encode a c
+  -> Encoder spec check decode encode b c
+  -> Encoder spec check decode encode (Either a b) c
+shadowEncoder f g = Encoder $ do
+  vf <- unEncoder f
+  vg <- unEncoder g
+
+      (flip fmap overlaps $ \(a, b, c) -> "first encoder encodes " <> tshow a <> " as " <> tshow c <> ", which second encoder decodes as " <> tshow b)
+  pure $ EncoderImpl
+    { _encoderImpl_encode = \case
+        Left a -> _encoderImpl_encode vf a
+        Right b -> _encoderImpl_encode vg b
+    , _encoderImpl_decode = \c -> (Left <$> _encoderImpl_decode vf c) `catchError` \_ -> Right <$> _encoderImpl_decode vg c
+    }
+-}
+--newtype Encoder spec check decode encode decoded encoded =
+--  Encoder { unEncoder :: check (spec decoded encoded, EncoderImpl decode encode decoded encoded) }
+newtype Encoder check spec decoded encoded =
+  Encoder { unEncoder :: check (spec decoded encoded) }
 
 data EncoderImpl decode encode decoded encoded = EncoderImpl
   { _encoderImpl_decode :: !(decode encoded decoded)
   , _encoderImpl_encode :: !(encode decoded encoded)
   }
+
+unsafeMkEncoder
+  :: Applicative check
+  => spec decoded encoded
+  -> Encoder check spec decoded encoded
+unsafeMkEncoder = Encoder . pure
+
+hoistSpec
+  :: Functor check
+  => (forall dec enc. spec dec enc -> spec' dec enc)
+  -> Encoder check spec  decoded encoded
+  -> Encoder check spec' decoded encoded
+hoistSpec f = Encoder . fmap f . unEncoder
+
+checkEncoder
+  :: Functor check
+  => Encoder check spec decoded encoded
+  -> check (Encoder Identity spec decoded encoded)
+checkEncoder = fmap unsafeMkEncoder . unEncoder
+
+decode :: Encoder Identity (EncoderImpl decode encode) decoded encoded -> decode encoded decoded
+decode (Encoder (Identity impl)) = _encoderImpl_decode impl
+
+encode :: Encoder Identity (EncoderImpl decode encode) decoded encoded -> encode decoded encoded
+encode (Encoder (Identity impl)) = _encoderImpl_encode impl
+
 instance (Category decode, Category encode) => Category (EncoderImpl decode encode) where
   id = EncoderImpl id id
   f . g = EncoderImpl
@@ -131,9 +184,9 @@ data Implicitness
   = ImplicitSource
   | ImplicitTarget
 
-data Categoryish (x :: Implicitness) m c a b where
-  Categoryish_ImplicitSource :: (forall x. m x -> c a x) -> m b -> Categoryish 'ImplicitSource m c a b
-  Categoryish_ImplicitTarget :: (forall x. m x -> c x b) -> m a -> Categoryish 'ImplicitTarget m c a b
+data Categoryish (x :: Implicitness) f c a b where
+  Categoryish_ImplicitSource :: (forall x. f x -> c a x) -> f b -> Categoryish 'ImplicitSource f c a b
+  Categoryish_ImplicitTarget :: (forall x. f x -> c x b) -> f a -> Categoryish 'ImplicitTarget f c a b
 
 explicit :: Categoryish x m c a b -> c a b
 explicit = \case
@@ -146,14 +199,10 @@ instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitSource m c) where
 instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitTarget m c) where
   b2c `o` Categoryish_ImplicitTarget a2b ma = Categoryish_ImplicitTarget (\m -> explicit b2c `o` a2b m) ma
 
+newtype Checked check arrow source target = Checked (check (arrow source target))
+--type BinaryFormat check decoded encoded = Categoryish 'ImplicitTarget Format (Checked check (EncoderImpl DecodeViaGet EncodeViaPut)) decoded encoded
 type DecodeViaGet = Categoryish 'ImplicitSource Binary.Get      Parse
 type EncodeViaPut = Categoryish 'ImplicitTarget (Op Binary.Put) (->)
-
-decode :: Encoder Identity decode encode decoded encoded -> decode encoded decoded
-decode (Encoder (Identity impl)) = _encoderImpl_decode impl
-
-encode :: Encoder Identity decode encode decoded encoded -> encode decoded encoded
-encode (Encoder (Identity impl)) = _encoderImpl_encode impl
 
 encodeHask :: Format a -> (->) a ByteString
 encodeHask f = Binary.runPut . encodeToPut (encode $ encoderHask f)
@@ -165,11 +214,7 @@ decodeHask f = case decode (encoderHask f) of
 encoderHask
   :: Applicative check
   => Format a
-  -> Encoder check
-      DecodeViaGet
-      EncodeViaPut
-      a
-      ByteString
+  -> Encoder check (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString
 encoderHask = \case
   Format_Byte -> unsafeMkEncoder $ EncoderImpl
     { _encoderImpl_decode = decodeFromGet Binary.getWord8
@@ -194,6 +239,7 @@ encoderHask = \case
           b <- decodeToGet (_encoderImpl_decode eb)
           pure (a,b)
       }
+--  Format_UntaggedSum fa fb ->
   Format_Sum fa fb -> Encoder $ do
     ea <- unEncoder $ encoderHask fa
     eb <- unEncoder $ encoderHask fb
