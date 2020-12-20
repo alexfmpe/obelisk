@@ -33,6 +33,7 @@ import qualified Data.ByteString.Lazy as ByteString
 import Data.Foldable
 import Data.Functor.Compose
 import Data.Functor.Contravariant
+import Data.Functor.Identity
 import Data.Int
 import Data.List
 import Data.HexString
@@ -63,7 +64,7 @@ test = do
       :. Right 0x62
       :. [0x63, 0x64, 0x65]
 
-    enc = either (error . T.unpack) haskImplFormat $ checkFormat f
+    enc = either (error . T.unpack) id $ checkEncoder $ haskFormat f
 
     b = encodeHask enc a
     c = decodeHask enc `runParse` b
@@ -71,6 +72,7 @@ test = do
   print b
   print $ fromBytes $ ByteString.toStrict b
   print c
+
   putStrLn ""
 --  putStrLn $ T.unpack $ decideSolidity f
 --  putStrLn $ T.unpack $ decodeRust f
@@ -136,38 +138,37 @@ shadowEncoder f g = Encoder $ do
     , _encoderImpl_decode = \c -> (Left <$> _encoderImpl_decode vf c) `catchError` \_ -> Right <$> _encoderImpl_decode vg c
     }
 -}
-newtype Encoder spec decoded encoded =
-  Encoder { unEncoder :: spec decoded encoded }
+newtype Encoder check spec decoded encoded =
+  Encoder { unEncoder :: check (spec decoded encoded) }
 
 data EncoderImpl decode encode decoded encoded = EncoderImpl
   { _encoderImpl_decode :: !(decode encoded decoded)
   , _encoderImpl_encode :: !(encode decoded encoded)
   }
-{-
-unsafeMkEncoder
-  :: Applicative check
-  => spec decoded encoded
-  -> check (Encoder spec decoded encoded)
-unsafeMkEncoder = pure . Encoder
--}
+
+checkEncoder
+  :: Functor check
+  => Encoder check spec decoded encoded
+  -> check (Encoder Identity spec decoded encoded)
+checkEncoder = fmap (Encoder . Identity) . unEncoder
 
 hoistSpec
   :: Functor check
   => (forall dec enc. spec dec enc -> spec' dec enc)
-  -> check (Encoder spec  decoded encoded)
-  -> check (Encoder spec' decoded encoded)
-hoistSpec f = fmap $ Encoder . f . unEncoder
+  -> Encoder check spec  decoded encoded
+  -> Encoder check spec' decoded encoded
+hoistSpec f = Encoder . fmap f . unEncoder
 
-decode :: Encoder (EncoderImpl decode encode) decoded encoded -> decode encoded decoded
-decode = _encoderImpl_decode . unEncoder
+decode :: Encoder Identity (EncoderImpl decode encode) decoded encoded -> decode encoded decoded
+decode = _encoderImpl_decode . runIdentity . unEncoder
 
-encode :: Encoder (EncoderImpl decode encode) decoded encoded -> encode decoded encoded
-encode = _encoderImpl_encode . unEncoder
+encode :: Encoder Identity (EncoderImpl decode encode) decoded encoded -> encode decoded encoded
+encode = _encoderImpl_encode . runIdentity . unEncoder
 
-encodeHask :: Encoder (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> (->) a ByteString
+encodeHask :: Encoder Identity (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> (->) a ByteString
 encodeHask enc = Binary.runPut . encodeToPut (encode enc)
 
-decodeHask :: Encoder (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> Parse ByteString a
+decodeHask :: Encoder Identity (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> Parse ByteString a
 decodeHask enc = case decode enc of
   Categoryish_ImplicitSource bs2a m -> bs2a m
 
@@ -204,13 +205,16 @@ instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitTarget m c) where
 type DecodeViaGet = Categoryish 'ImplicitSource Binary.Get      Parse
 type EncodeViaPut = Categoryish 'ImplicitTarget (Op Binary.Put) (->)
 
-haskImplFormat :: Format a -> Encoder (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString
+haskFormat :: Applicative check => Format a -> Encoder check (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString
+haskFormat = Encoder . fmap haskImplFormat . checkFormat
+
+haskImplFormat :: Format a -> EncoderImpl DecodeViaGet EncodeViaPut a ByteString
 haskImplFormat = \case
-  Format_Byte -> Encoder $ EncoderImpl
+  Format_Byte -> EncoderImpl
     { _encoderImpl_decode = decodeFromGet Binary.getWord8
     , _encoderImpl_encode = encodeFromPut Binary.putWord8
     }
-  Format_Magic bs -> Encoder $ EncoderImpl
+  Format_Magic bs -> EncoderImpl
     { _encoderImpl_decode = decodeFromGet $ do
         --TODO: only consume until mismatch?
         bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
@@ -218,9 +222,9 @@ haskImplFormat = \case
     , _encoderImpl_encode = encodeFromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
     }
   Format_Product fa fb ->
-    let ea = unEncoder $ haskImplFormat fa
-        eb = unEncoder $ haskImplFormat fb
-    in Encoder $ EncoderImpl
+    let ea = haskImplFormat fa
+        eb = haskImplFormat fb
+    in EncoderImpl
        { _encoderImpl_encode = encodeFromPut $ \(a,b) -> do
            encodeToPut (_encoderImpl_encode ea) a
            encodeToPut (_encoderImpl_encode eb) b
@@ -231,9 +235,9 @@ haskImplFormat = \case
        }
 --  Format_UntaggedSum fa fb ->
   Format_Sum fa fb ->
-    let ea = unEncoder $ haskImplFormat fa
-        eb = unEncoder $ haskImplFormat fb
-    in Encoder $ EncoderImpl
+    let ea = haskImplFormat fa
+        eb = haskImplFormat fb
+    in EncoderImpl
        { _encoderImpl_encode = encodeFromPut $ \case
            Left a -> Binary.putWord8 0 *> encodeToPut (_encoderImpl_encode ea) a
            Right b -> Binary.putWord8 1 *> encodeToPut (_encoderImpl_encode eb) b
@@ -244,9 +248,9 @@ haskImplFormat = \case
              _ -> fail "Invalid tag for sum type"
        }
   Format_Replicate fn fa ->
-    let en = unEncoder $ haskImplFormat fn
-        ea = unEncoder $ haskImplFormat fa
-    in Encoder $ EncoderImpl
+    let en = haskImplFormat fn
+        ea = haskImplFormat fa
+    in EncoderImpl
        { _encoderImpl_encode = encodeFromPut $ \as -> do
            encodeToPut (_encoderImpl_encode en) (fromIntegral $ length as)
            for_ as $ encodeToPut (_encoderImpl_encode ea)
@@ -255,8 +259,7 @@ haskImplFormat = \case
            replicateM (fromIntegral n) (decodeToGet (_encoderImpl_decode ea))
        }
 
-checkFormat
-  :: MonadError Text check => Format a -> check (Format a)
+checkFormat :: Applicative check => Format a -> check (Format a)
 checkFormat f = case f of
   Format_Byte -> pure f
   Format_Magic _ -> pure f
