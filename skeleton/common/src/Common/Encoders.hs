@@ -1,19 +1,14 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
-{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
 module Common.Encoders where
@@ -37,7 +32,6 @@ import Data.Functor.Identity
 import Data.Int
 import Data.List
 import Data.HexString
-import Data.Maybe
 import Data.Semigroupoid
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -120,24 +114,6 @@ optional f = Format_Sum epsilon f
 epsilon :: Format ()
 epsilon = Format_Magic ""
 
-
-{-
-shadowEncoderImpl
-  :: Encoder spec check decode encode a c
-  -> Encoder spec check decode encode b c
-  -> Encoder spec check decode encode (Either a b) c
-shadowEncoder f g = Encoder $ do
-  vf <- unEncoder f
-  vg <- unEncoder g
-
-      (flip fmap overlaps $ \(a, b, c) -> "first encoder encodes " <> tshow a <> " as " <> tshow c <> ", which second encoder decodes as " <> tshow b)
-  pure $ EncoderImpl
-    { _encoderImpl_encode = \case
-        Left a -> _encoderImpl_encode vf a
-        Right b -> _encoderImpl_encode vg b
-    , _encoderImpl_decode = \c -> (Left <$> _encoderImpl_decode vf c) `catchError` \_ -> Right <$> _encoderImpl_decode vg c
-    }
--}
 newtype Encoder check spec decoded encoded =
   Encoder { unEncoder :: check (spec decoded encoded) }
 
@@ -233,7 +209,6 @@ haskImplFormat = \case
            b <- decodeToGet (_encoderImpl_decode eb)
            pure (a,b)
        }
---  Format_UntaggedSum fa fb ->
   Format_Sum fa fb ->
     let ea = haskImplFormat fa
         eb = haskImplFormat fb
