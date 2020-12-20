@@ -475,9 +475,10 @@ maybeToEitherEncoder = unsafeMkEncoder $ EncoderImpl
 
 maybeEncoder
   :: ( MonadError Text check
+     , MonadError err parse
+     , Foldable parse
      , Show a
      , Show b
-     , check ~ parse
      )
   => Encoder check parse () b
   -> Encoder check parse a b
@@ -611,12 +612,14 @@ tshow :: Show a => a -> Text
 tshow = T.pack . show
 
 shadowEncoder
-  :: ( Universe a
+  :: forall a b c err check parse.
+     ( Universe a
      , MonadError Text check
+     , MonadError err parse
+     , Foldable parse
      , Show a
      , Show b
      , Show c
-     , check ~ parse --TODO: Get rid of this
      )
   => Encoder check parse a c -- ^ Overlaps; should have a small number of possible routes
   -> Encoder check parse b c -- ^ Gets overlapped
@@ -624,15 +627,14 @@ shadowEncoder
 shadowEncoder f g = Encoder $ do
   vf <- unEncoder f
   vg <- unEncoder g
-  let gCanParse c = catchError (Just <$> _encoderImpl_decode vg c) (\_ -> pure Nothing)
-  overlaps <- fmap catMaybes $ forM universe $ \a -> do
-    let c = _encoderImpl_encode vf a
-    mb <- gCanParse c
-    pure $ fmap (\b -> (a, b, c)) mb
-  case overlaps of
+  let overlaps = fmap catMaybes $ forM universe $ \a -> do
+        let c = _encoderImpl_encode vf a
+        gCanParse <- catchError (Just <$> _encoderImpl_decode vg c) (\_ -> pure Nothing)
+        pure $ fmap (\b -> (a, b, c)) gCanParse
+  for_ overlaps $ \case
     [] -> pure ()
-    _ -> throwError $ "shadowEncoder: overlap detected: " <> T.unlines
-      (flip fmap overlaps $ \(a, b, c) -> "first encoder encodes " <> tshow a <> " as " <> tshow c <> ", which second encoder decodes as " <> tshow b)
+    xs -> throwError $ "shadowEncoder: overlap detected: " <> T.unlines
+      (flip fmap xs $ \(a, b, c) -> "first encoder encodes " <> tshow a <> " as " <> tshow c <> ", which second encoder decodes as " <> tshow b)
   pure $ EncoderImpl
     { _encoderImpl_encode = \case
         Left a -> _encoderImpl_encode vf a
@@ -971,7 +973,7 @@ obeliskRouteEncoder :: forall check parse appRoute.
      , GCompare (ObeliskRoute appRoute)
      , GShow appRoute
      , MonadError Text check
-     , check ~ parse --TODO: Get rid of this
+     , MonadError Text parse
      )
   => (forall a. appRoute a -> SegmentResult check parse a)
   -> Encoder check parse (R (ObeliskRoute appRoute)) PageName
