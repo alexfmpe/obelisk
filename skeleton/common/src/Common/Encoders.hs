@@ -10,16 +10,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Common.Encoders where
 
+import Algebra.Lattice
+import Control.Applicative (Alternative(..), liftA2, (<|>))
 import Control.Arrow
 import Control.Category
 --import qualified Control.Categorical.Functor as Cat
-import Control.Monad (when, replicateM)
-import Control.Monad.Reader hiding (join)
-import Control.Monad.Writer hiding (join)
+import Control.Monad (replicateM, unless, when, (<=<))
+import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Fail (MonadFail(..))
+import Control.Monad.Reader (MonadReader, ReaderT(..), ask, local)
+import Control.Monad.Writer (MonadWriter, Writer, runWriter, tell)
 import qualified Data.Binary as Binary
 import qualified Data.Binary.Get as Binary
 import qualified Data.Binary.Put as Binary
@@ -27,19 +33,25 @@ import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as ByteString
 import Data.Foldable
 import Data.Functor.Apply
+import Data.Functor.Alt hiding (optional)
 import Data.Functor.Bind
 import Data.Functor.Compose
-import Data.Functor.Contravariant
 import Data.Functor.Identity
 import Data.Int
 import Data.List
-import Data.HexString
+import qualified Data.HexString as Hex
 import Data.Semigroupoid
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Word
 import GHC.Generics (Generic)
-import Prelude hiding (id, (.))
+import qualified Kleene as K
+import qualified Kleene.DFA as DFA
+import qualified Kleene.ERE as ERE
+import qualified Kleene.RE as RE
+import Prelude hiding (fail, id, (.))
+import qualified Test.QuickCheck as QC
+
 type SomeData = Either () () :. Word8 :. Either () Word8 :. [Word8]
 
 tshow :: Show a => a -> Text
@@ -60,16 +72,27 @@ test = do
       :. Right 0x62
       :. [0x63, 0x64, 0x65]
 
-    enc = either (error . T.unpack) id $ checkEncoder $ haskFormat f
+    enc = either (error . show) id $ checkEncoder $ haskFormat f
 
     b = encodeHask enc a
     c = decodeHask enc `runParse` b
+
+    printOverlaps fmt = case checkOverlap fmt of
+      Right _ -> pure ()
+      Left (OverlapError fa fb regexp examples) -> print (fa, fb, (Hex.fromBytes . ByteString.toStrict) <$> take 3 examples, regexp)
+
   print a
   print b
-  print $ fromBytes $ ByteString.toStrict b
+  print $ Hex.fromBytes $ ByteString.toStrict b
   print c
 
   putStrLn ""
+
+  printOverlaps $ Format_Byte :+: Format_Byte
+  printOverlaps $ Format_Magic (ByteString.singleton 0) :+: Format_Byte
+  printOverlaps $ Format_Replicate Format_Byte Format_Byte :+: optional Format_Byte
+  printOverlaps $ Format_Byte :*: Format_Replicate Format_Byte Format_Byte :+: optional Format_Byte
+  printOverlaps $ Format_Byte :*: Format_Byte :*: Format_Replicate Format_Byte Format_Byte :+: optional Format_Byte
 --  putStrLn $ T.unpack $ decideSolidity f
 --  putStrLn $ T.unpack $ decodeRust f
 
@@ -103,6 +126,10 @@ data Format a where
   Format_Sum :: Format a -> Format b -> Format (Either a b)
   Format_Replicate :: Format Word8 -> Format a -> Format [a]
 --  Format_Struct :: HList (Compose Labeled Format) types -> Format (HList Format types)
+
+deriving instance Eq (Format a)
+deriving instance Ord (Format a)
+deriving instance Show (Format a)
 
 field :: Text -> Format a -> HList (Compose Labeled Format) as -> HList (Compose Labeled Format) (a ': as)
 field lbl f = HCons (Compose (Labeled lbl f))
@@ -157,8 +184,8 @@ instance (Category decode, Category encode) => Category (EncoderImpl decode enco
     (_encoderImpl_decode f >>> _encoderImpl_decode g)
     (_encoderImpl_encode f <<< _encoderImpl_encode g)
 
-haskFormat :: Applicative check => Format a -> Encoder check (EncoderImpl GetCategory PutCategory) a ByteString
-haskFormat = Encoder . fmap haskImplFormat . checkFormat
+haskFormat :: MonadError OverlapError check => Format a -> Encoder check (EncoderImpl GetCategory PutCategory) a ByteString
+haskFormat = Encoder . fmap haskImplFormat . checkOverlap
 
 haskImplFormat :: Format a -> EncoderImpl GetCategory PutCategory a ByteString
 haskImplFormat = \case
@@ -180,10 +207,7 @@ haskImplFormat = \case
        { _encoderImpl_encode = toPutCategory $ \(a,b) -> do
            fromPutCategory (_encoderImpl_encode ea) a
            fromPutCategory (_encoderImpl_encode eb) b
-       , _encoderImpl_decode = do
-           a <- _encoderImpl_decode ea
-           b <- _encoderImpl_decode eb
-           pure (a,b)
+       , _encoderImpl_decode = liftA2 (,) (_encoderImpl_decode ea) (_encoderImpl_decode eb)
        }
   Format_Sum fa fb ->
     let ea = haskImplFormat fa
@@ -196,7 +220,7 @@ haskImplFormat = \case
            toGetCategory Binary.getWord8 >>= \case
              0 -> Left <$> _encoderImpl_decode ea
              1 -> Right <$> _encoderImpl_decode eb
-             _ -> fail "Invalid tag for sum type"
+             _ -> toGetCategory $ fail "Invalid tag for sum type"
        }
   Format_Replicate fn fa ->
     let en = haskImplFormat fn
@@ -210,13 +234,58 @@ haskImplFormat = \case
            replicateM (fromIntegral n) (_encoderImpl_decode ea)
        }
 
-checkFormat :: Applicative check => Format a -> check (Format a)
-checkFormat f = case f of
-  Format_Byte -> pure f
-  Format_Magic _ -> pure f
-  Format_Product _ _ -> pure f
-  Format_Sum _ _ -> pure f
-  Format_Replicate _ _ -> pure f
+-- OverlapError (Some Format) (Some Format) (FormatRegexp Word8)
+data OverlapError
+  = OverlapError String String (FormatRegexp Word8) [ByteString] --TODO: unsafe escape hatch for overapproximation overlaps?
+  deriving (Eq, Ord, Show, Generic)
+
+data FormatRegexp c
+  = FormatRegexp_Exact (K.ERE c)
+  | FormatRegexp_OverApproximation (K.ERE c)
+  deriving (Eq, Ord, Show, Generic)
+
+formatRegexp :: (K.ERE c -> a) -> (K.ERE c -> a) -> FormatRegexp c -> a
+formatRegexp f g = \case
+  FormatRegexp_Exact r -> f r
+  FormatRegexp_OverApproximation r -> g r
+
+monotoneBinary
+  :: (K.ERE c -> K.ERE c -> K.ERE c)
+  -> (FormatRegexp c -> FormatRegexp c -> FormatRegexp c)
+monotoneBinary op = curry $ \case
+    (FormatRegexp_Exact a, FormatRegexp_Exact b) -> FormatRegexp_Exact (a `op` b)
+    (a,b) -> FormatRegexp_OverApproximation $ formatRegexp id id a `op` formatRegexp id id b
+
+instance Eq c => Semigroup (FormatRegexp c) where
+  (<>) = monotoneBinary (<>)
+
+instance Lattice (K.ERE c) => Lattice (FormatRegexp c) where
+  (\/) = monotoneBinary (\/)
+  (/\) = monotoneBinary (/\)
+
+regexpIsEmpty :: (Ord c, Enum c, Bounded c) => FormatRegexp c -> Bool
+regexpIsEmpty = ERE.equivalent K.empty . formatRegexp id id
+
+checkOverlap :: MonadError OverlapError check => Format a -> check (Format a)
+checkOverlap f = f <$ regexp f
+  where
+    regexp :: MonadError OverlapError check => Format a -> check (FormatRegexp Word8)
+    regexp = \case
+      Format_Byte -> pure $ FormatRegexp_Exact K.anyChar
+      Format_Magic bs -> pure $ FormatRegexp_Exact $ K.string $ ByteString.unpack bs
+      Format_Product fa fb -> liftA2 (<>) (regexp fa) (regexp fb)
+      Format_Sum fa fb -> do
+        ra <- regexp fa
+        rb <- regexp fb
+        let overlap = ra /\ rb
+        unless (regexpIsEmpty overlap) $ do
+          let examples = fmap ByteString.pack $ RE.generate (curry QC.choose) 1234 $ DFA.toRE $ DFA.fromERE $ formatRegexp id id overlap
+          throwError $ OverlapError (show fa) (show fb) overlap examples
+        pure $ ra \/ rb
+      Format_Replicate fn fa -> do
+        _ <- regexp fn
+        ra <- regexp fa
+        pure $ join formatRegexp (FormatRegexp_OverApproximation . K.star) ra
 
 toGetCategory :: Binary.Get a -> GetCategory ByteString a
 toGetCategory g = GetCategory $ \_ -> g
@@ -245,6 +314,11 @@ instance Bind (GetCategory a) where
   join gc = GetCategory $ \g -> unGetCategory gc g >>= \x -> unGetCategory x g
 instance Monad (GetCategory a) where
   (>>=) = (>>-)
+instance Alt (GetCategory a) where
+  gx <!> gy = GetCategory $ \g -> unGetCategory gx g <|> unGetCategory gy g
+instance Alternative (GetCategory a) where
+  (<|>) = (<!>)
+  empty = GetCategory $ const empty
 
 newtype PutCategory a b = PutCategory { unPutCategory :: (b -> Binary.Put) -> (a -> Binary.Put) }
 instance Semigroupoid PutCategory where

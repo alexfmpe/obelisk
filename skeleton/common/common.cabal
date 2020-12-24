@@ -7,12 +7,17 @@ library
   hs-source-dirs: src
   build-depends: base
                , obelisk-route
+               , binary
+               , bytestring
                , hexstring
+               , kleene
+               , lattices
                , mtl
+               , QuickCheck
                , semigroupoids
                , text
   exposed-modules:
     Common.Api
     Common.Encoders
     Common.Route
-  ghc-options: -Wall -Wredundant-constraints -Wincomplete-uni-patterns -Wincomplete-record-updates -O -fno-show-valid-hole-fits
+  ghc-options: -Wall -Werror -Wredundant-constraints -Wincomplete-uni-patterns -Wincomplete-record-updates -O -fno-show-valid-hole-fits
