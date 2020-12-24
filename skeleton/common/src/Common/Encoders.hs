@@ -17,7 +17,6 @@ import Control.Arrow
 import Control.Category
 --import qualified Control.Categorical.Functor as Cat
 import Control.Monad
-import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 import qualified Data.Binary as Binary
@@ -141,12 +140,13 @@ decode = _encoderImpl_decode . runIdentity . unEncoder
 encode :: Encoder Identity (EncoderImpl decode encode) decoded encoded -> encode decoded encoded
 encode = _encoderImpl_encode . runIdentity . unEncoder
 
-encodeHask :: Encoder Identity (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> (->) a ByteString
-encodeHask enc = Binary.runPut . encodeToPut (encode enc)
+encodeHask :: Encoder Identity (EncoderImpl GetCategory PutCategory) a ByteString -> (->) a ByteString
+encodeHask enc = Binary.runPut . fromPutCategory (encode enc)
 
-decodeHask :: Encoder Identity (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString -> Parse ByteString a
-decodeHask enc = case decode enc of
-  Categoryish_ImplicitSource bs2a m -> bs2a m
+decodeHask :: Encoder Identity (EncoderImpl GetCategory PutCategory) a ByteString -> Parse ByteString a
+decodeHask enc = Parse $ \bs -> case Binary.runGetOrFail (fromGetCategory $ decode enc) bs of
+  Left (rest, cursor, err) -> Left (rest, cursor, T.pack err)
+  Right (_, _, res) -> Right res
 
 instance (Category decode, Category encode) => Category (EncoderImpl decode encode) where
   id = EncoderImpl id id
@@ -154,84 +154,57 @@ instance (Category decode, Category encode) => Category (EncoderImpl decode enco
     (_encoderImpl_decode f >>> _encoderImpl_decode g)
     (_encoderImpl_encode f <<< _encoderImpl_encode g)
 
-data Implicitness
-  = ImplicitSource
-  | ImplicitTarget
-
-data Categoryish (x :: Implicitness) f c a b where
-  Categoryish_ImplicitSource :: (f b -> c a b) -> f b -> Categoryish 'ImplicitSource f c a b
-  Categoryish_ImplicitTarget :: (f a -> c a b) -> f a -> Categoryish 'ImplicitTarget f c a b
-
-newtype Const2 a b c = Const2 { unConst2 :: a }
-
-formatCategoryish :: Format a -> Categoryish 'ImplicitTarget Format (Const2 (Format a)) a ByteString
-formatCategoryish = Categoryish_ImplicitTarget (\f -> Const2 f)
-
-explicit :: Categoryish x m c a b -> c a b
-explicit = \case
-  Categoryish_ImplicitSource a2x mb -> a2x mb
-  Categoryish_ImplicitTarget x2b ma -> x2b ma
-
-instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitSource m c) where
-  Categoryish_ImplicitSource b2c mc `o` a2b = Categoryish_ImplicitSource (\m -> b2c m `o` explicit a2b) mc
-
-instance Semigroupoid c => Semigroupoid (Categoryish 'ImplicitTarget m c) where
-  b2c `o` Categoryish_ImplicitTarget a2b ma = Categoryish_ImplicitTarget (\m -> explicit b2c `o` a2b m) ma
-
-type DecodeViaGet = Categoryish 'ImplicitSource Binary.Get      Parse
-type EncodeViaPut = Categoryish 'ImplicitTarget (Op Binary.Put) (->)
-
-haskFormat :: Applicative check => Format a -> Encoder check (EncoderImpl DecodeViaGet EncodeViaPut) a ByteString
+haskFormat :: Applicative check => Format a -> Encoder check (EncoderImpl GetCategory PutCategory) a ByteString
 haskFormat = Encoder . fmap haskImplFormat . checkFormat
 
-haskImplFormat :: Format a -> EncoderImpl DecodeViaGet EncodeViaPut a ByteString
+haskImplFormat :: Format a -> EncoderImpl GetCategory PutCategory a ByteString
 haskImplFormat = \case
   Format_Byte -> EncoderImpl
-    { _encoderImpl_decode = decodeFromGet Binary.getWord8
-    , _encoderImpl_encode = encodeFromPut Binary.putWord8
+    { _encoderImpl_decode = toGetCategory Binary.getWord8
+    , _encoderImpl_encode = toPutCategory Binary.putWord8
     }
   Format_Magic bs -> EncoderImpl
-    { _encoderImpl_decode = decodeFromGet $ do
+    { _encoderImpl_decode = toGetCategory $ do
         --TODO: only consume until mismatch?
         bs' <- Binary.getByteString (fromIntegral $ ByteString.length bs)
         when (bs' /= ByteString.toStrict bs) $ fail "Magic number mismatch"
-    , _encoderImpl_encode = encodeFromPut $ \() -> Binary.putByteString $ ByteString.toStrict bs
+    , _encoderImpl_encode = toPutCategory $ \() -> Binary.putByteString $ ByteString.toStrict bs
     }
   Format_Product fa fb ->
     let ea = haskImplFormat fa
         eb = haskImplFormat fb
     in EncoderImpl
-       { _encoderImpl_encode = encodeFromPut $ \(a,b) -> do
-           encodeToPut (_encoderImpl_encode ea) a
-           encodeToPut (_encoderImpl_encode eb) b
-       , _encoderImpl_decode = decodeFromGet $ do
-           a <- decodeToGet (_encoderImpl_decode ea)
-           b <- decodeToGet (_encoderImpl_decode eb)
+       { _encoderImpl_encode = toPutCategory $ \(a,b) -> do
+           fromPutCategory (_encoderImpl_encode ea) a
+           fromPutCategory (_encoderImpl_encode eb) b
+       , _encoderImpl_decode = toGetCategory $ do
+           a <- fromGetCategory (_encoderImpl_decode ea)
+           b <- fromGetCategory (_encoderImpl_decode eb)
            pure (a,b)
        }
   Format_Sum fa fb ->
     let ea = haskImplFormat fa
         eb = haskImplFormat fb
     in EncoderImpl
-       { _encoderImpl_encode = encodeFromPut $ \case
-           Left a -> Binary.putWord8 0 *> encodeToPut (_encoderImpl_encode ea) a
-           Right b -> Binary.putWord8 1 *> encodeToPut (_encoderImpl_encode eb) b
-       , _encoderImpl_decode = decodeFromGet $ do
+       { _encoderImpl_encode = toPutCategory $ \case
+           Left a -> Binary.putWord8 0 *> fromPutCategory (_encoderImpl_encode ea) a
+           Right b -> Binary.putWord8 1 *> fromPutCategory (_encoderImpl_encode eb) b
+       , _encoderImpl_decode = toGetCategory $ do
            Binary.getWord8 >>= \case
-             0 -> Left <$> decodeToGet (_encoderImpl_decode ea)
-             1 -> Right <$> decodeToGet (_encoderImpl_decode eb)
+             0 -> Left <$> fromGetCategory (_encoderImpl_decode ea)
+             1 -> Right <$> fromGetCategory (_encoderImpl_decode eb)
              _ -> fail "Invalid tag for sum type"
        }
   Format_Replicate fn fa ->
     let en = haskImplFormat fn
         ea = haskImplFormat fa
     in EncoderImpl
-       { _encoderImpl_encode = encodeFromPut $ \as -> do
-           encodeToPut (_encoderImpl_encode en) (fromIntegral $ length as)
-           for_ as $ encodeToPut (_encoderImpl_encode ea)
-       , _encoderImpl_decode = decodeFromGet $ do
-           n <- decodeToGet (_encoderImpl_decode en)
-           replicateM (fromIntegral n) (decodeToGet (_encoderImpl_decode ea))
+       { _encoderImpl_encode = toPutCategory $ \as -> do
+           fromPutCategory (_encoderImpl_encode en) (fromIntegral $ length as)
+           for_ as $ fromPutCategory (_encoderImpl_encode ea)
+       , _encoderImpl_decode = toGetCategory $ do
+           n <- fromGetCategory (_encoderImpl_decode en)
+           replicateM (fromIntegral n) (fromGetCategory (_encoderImpl_decode ea))
        }
 
 checkFormat :: Applicative check => Format a -> check (Format a)
@@ -242,19 +215,31 @@ checkFormat f = case f of
   Format_Sum _ _ -> pure f
   Format_Replicate _ _ -> pure f
 
-decodeFromGet :: Binary.Get a -> DecodeViaGet ByteString a
-decodeFromGet = Categoryish_ImplicitSource $ \g -> Parse $ \bs -> case Binary.runGetOrFail g bs of
-  Left (rest, cursor, err) -> Left (rest, cursor, T.pack err)
-  Right (_, _, res) -> Right res
+toGetCategory :: Binary.Get a -> GetCategory ByteString a
+toGetCategory g = GetCategory $ \_ -> g
 
-encodeFromPut :: (a -> Binary.Put) -> EncodeViaPut a ByteString
-encodeFromPut = Categoryish_ImplicitTarget (\p -> Binary.runPut . getOp p) . Op
+toPutCategory :: (a -> Binary.Put) -> PutCategory a ByteString
+toPutCategory p = PutCategory $ \_ -> p
 
-encodeToPut :: EncodeViaPut a ByteString -> (a -> Binary.Put)
-encodeToPut (Categoryish_ImplicitTarget _ p) = getOp p
+fromPutCategory :: PutCategory a ByteString -> (a -> Binary.Put)
+fromPutCategory = flip unPutCategory Binary.put
 
-decodeToGet :: DecodeViaGet ByteString a -> Binary.Get a
-decodeToGet (Categoryish_ImplicitSource _ g) = g
+fromGetCategory :: GetCategory ByteString a -> Binary.Get a
+fromGetCategory = flip unGetCategory Binary.get
+
+newtype GetCategory a b = GetCategory { unGetCategory :: Binary.Get a -> Binary.Get b }
+instance Semigroupoid GetCategory where
+  GetCategory f `o` GetCategory g = GetCategory (f `o` g)
+instance Category GetCategory where
+  (.) = o
+  id = GetCategory id
+
+newtype PutCategory a b = PutCategory { unPutCategory :: (b -> Binary.Put) -> (a -> Binary.Put) }
+instance Semigroupoid PutCategory where
+  PutCategory f `o` PutCategory g = PutCategory (g `o` f)
+instance Category PutCategory where
+  (.) = o
+  id = PutCategory id
 
 newtype Parse a b = Parse { runParse :: a -> Either (ByteString, Int64, Text) b }
 instance Category Parse where
