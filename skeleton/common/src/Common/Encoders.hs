@@ -1,5 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -16,15 +17,17 @@ module Common.Encoders where
 import Control.Arrow
 import Control.Category
 --import qualified Control.Categorical.Functor as Cat
-import Control.Monad
-import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad (when, replicateM)
+import Control.Monad.Reader hiding (join)
+import Control.Monad.Writer hiding (join)
 import qualified Data.Binary as Binary
 import qualified Data.Binary.Get as Binary
 import qualified Data.Binary.Put as Binary
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as ByteString
 import Data.Foldable
+import Data.Functor.Apply
+import Data.Functor.Bind
 import Data.Functor.Compose
 import Data.Functor.Contravariant
 import Data.Functor.Identity
@@ -177,9 +180,9 @@ haskImplFormat = \case
        { _encoderImpl_encode = toPutCategory $ \(a,b) -> do
            fromPutCategory (_encoderImpl_encode ea) a
            fromPutCategory (_encoderImpl_encode eb) b
-       , _encoderImpl_decode = toGetCategory $ do
-           a <- fromGetCategory (_encoderImpl_decode ea)
-           b <- fromGetCategory (_encoderImpl_decode eb)
+       , _encoderImpl_decode = do
+           a <- _encoderImpl_decode ea
+           b <- _encoderImpl_decode eb
            pure (a,b)
        }
   Format_Sum fa fb ->
@@ -189,10 +192,10 @@ haskImplFormat = \case
        { _encoderImpl_encode = toPutCategory $ \case
            Left a -> Binary.putWord8 0 *> fromPutCategory (_encoderImpl_encode ea) a
            Right b -> Binary.putWord8 1 *> fromPutCategory (_encoderImpl_encode eb) b
-       , _encoderImpl_decode = toGetCategory $ do
-           Binary.getWord8 >>= \case
-             0 -> Left <$> fromGetCategory (_encoderImpl_decode ea)
-             1 -> Right <$> fromGetCategory (_encoderImpl_decode eb)
+       , _encoderImpl_decode = do
+           toGetCategory Binary.getWord8 >>= \case
+             0 -> Left <$> _encoderImpl_decode ea
+             1 -> Right <$> _encoderImpl_decode eb
              _ -> fail "Invalid tag for sum type"
        }
   Format_Replicate fn fa ->
@@ -202,9 +205,9 @@ haskImplFormat = \case
        { _encoderImpl_encode = toPutCategory $ \as -> do
            fromPutCategory (_encoderImpl_encode en) (fromIntegral $ length as)
            for_ as $ fromPutCategory (_encoderImpl_encode ea)
-       , _encoderImpl_decode = toGetCategory $ do
-           n <- fromGetCategory (_encoderImpl_decode en)
-           replicateM (fromIntegral n) (fromGetCategory (_encoderImpl_decode ea))
+       , _encoderImpl_decode = do
+           n <- _encoderImpl_decode en
+           replicateM (fromIntegral n) (_encoderImpl_decode ea)
        }
 
 checkFormat :: Applicative check => Format a -> check (Format a)
@@ -227,12 +230,21 @@ fromPutCategory = flip unPutCategory Binary.put
 fromGetCategory :: GetCategory ByteString a -> Binary.Get a
 fromGetCategory = flip unGetCategory Binary.get
 
-newtype GetCategory a b = GetCategory { unGetCategory :: Binary.Get a -> Binary.Get b }
+newtype GetCategory a b = GetCategory { unGetCategory :: Binary.Get a -> Binary.Get b } deriving Functor
 instance Semigroupoid GetCategory where
   GetCategory f `o` GetCategory g = GetCategory (f `o` g)
 instance Category GetCategory where
   (.) = o
   id = GetCategory id
+instance Apply (GetCategory a) where
+  GetCategory gf <.> GetCategory gx = GetCategory $ \g -> gf g <*> gx g
+instance Applicative (GetCategory a) where
+  pure = GetCategory . const . pure
+  (<*>) = (<.>)
+instance Bind (GetCategory a) where
+  join gc = GetCategory $ \g -> unGetCategory gc g >>= \x -> unGetCategory x g
+instance Monad (GetCategory a) where
+  (>>=) = (>>-)
 
 newtype PutCategory a b = PutCategory { unPutCategory :: (b -> Binary.Put) -> (a -> Binary.Put) }
 instance Semigroupoid PutCategory where
