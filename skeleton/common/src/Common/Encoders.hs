@@ -21,7 +21,7 @@ import Control.Applicative (Alternative(..), liftA2, (<|>))
 import Control.Arrow
 import Control.Category
 --import qualified Control.Categorical.Functor as Cat
-import Control.Monad (replicateM, unless, when, (<=<))
+import Control.Monad (replicateM, unless, void, when, (<=<))
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Fail (MonadFail(..))
 import Control.Monad.Reader (MonadReader, ReaderT(..), ask, local)
@@ -40,6 +40,7 @@ import Data.Functor.Identity
 import Data.Int
 import Data.List
 import qualified Data.HexString as Hex
+import Data.Semigroup (stimes)
 import Data.Semigroupoid
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -51,6 +52,9 @@ import qualified Kleene.ERE as ERE
 import qualified Kleene.RE as RE
 import Prelude hiding (fail, id, (.))
 import qualified Test.QuickCheck as QC
+
+__TODO__ :: a
+__TODO__ = undefined
 
 type SomeData = Either () () :. Word8 :. Either () Word8 :. [Word8]
 
@@ -64,13 +68,13 @@ test = do
     f =   (Format_Magic "V1" :+: Format_Magic "V2")
       :*: Format_Byte
       :*: optional Format_Byte
-      :*: Format_Replicate Format_Byte Format_Byte
+      :*: Format_Pad 0 8 (Format_Replicate Format_Byte Format_Byte)
 
     a :: SomeData
     a =  Left ()
       :. 0x61
       :. Right 0x62
-      :. [0x63, 0x64, 0x65]
+      :. [0x63, 0x64, 0x65, 0x66, 0x67]
 
     enc = either (error . show) id $ checkEncoder $ haskFormat f
 
@@ -78,7 +82,7 @@ test = do
     c = decodeHask enc `runParse` b
 
     printOverlaps fmt = case checkOverlap fmt of
-      Right _ -> pure ()
+      Right _ -> putStrLn "No overlaps"
       Left (OverlapError fa fb regexp examples) -> print (fa, fb, (Hex.fromBytes . ByteString.toStrict) <$> take 3 examples, regexp)
 
   print a
@@ -119,8 +123,13 @@ data Labeled a = Labeled Text a
 
 type Fields = HList Labeled
 
+-- TODO: add align/pad serialization primitives upstream
+-- TODO: can we pad after unambigously?
 data Format a where
   Format_Magic :: ByteString -> Format ()
+  --Format_Align :: Word8 -> Format a -> Format a -- TODO: need bytes written count
+  Format_Pad :: Word8 -> Word64 -> Format a -> Format a
+
   Format_Byte :: Format Word8
   Format_Product :: Format a -> Format b -> Format (a,b)
   Format_Sum :: Format a -> Format b -> Format (Either a b)
@@ -187,6 +196,11 @@ instance (Category decode, Category encode) => Category (EncoderImpl decode enco
 haskFormat :: MonadError OverlapError check => Format a -> Encoder check (EncoderImpl GetCategory PutCategory) a ByteString
 haskFormat = Encoder . fmap haskImplFormat . checkOverlap
 
+padLength :: Word64 -> Word64 -> Word64
+padLength toLength len = case len `mod` toLength of
+  0 -> 0
+  n -> toLength - n
+
 haskImplFormat :: Format a -> EncoderImpl GetCategory PutCategory a ByteString
 haskImplFormat = \case
   Format_Byte -> EncoderImpl
@@ -200,6 +214,24 @@ haskImplFormat = \case
         when (bs' /= ByteString.toStrict bs) $ fail "Magic number mismatch"
     , _encoderImpl_encode = toPutCategory $ \() -> Binary.putByteString $ ByteString.toStrict bs
     }
+  Format_Pad padByte toLength fa ->
+    let ea = haskImplFormat fa
+    in EncoderImpl
+       { _encoderImpl_encode = toPutCategory $ \a -> do
+           let bs = Binary.runPut $ fromPutCategory (_encoderImpl_encode ea) a
+           Binary.putByteString $ ByteString.toStrict bs
+           void $ replicateM (fromIntegral $ padLength toLength $ fromIntegral $ ByteString.length bs) $ Binary.putWord8 0
+       , _encoderImpl_decode = do
+           before <- toGetCategory Binary.bytesRead
+           a <- _encoderImpl_decode ea
+           after <- toGetCategory $ Binary.bytesRead
+           void $ replicateM (fromIntegral $ padLength toLength $ fromIntegral $ after - before) $ do
+             b <- toGetCategory $ Binary.getWord8
+             unless (b == padByte) $ toGetCategory $ fail "Invalid padding byte"
+           pure a
+       }
+
+
   Format_Product fa fb ->
     let ea = haskImplFormat fa
         eb = haskImplFormat fb
@@ -269,10 +301,16 @@ regexpIsEmpty = ERE.equivalent K.empty . formatRegexp id id
 checkOverlap :: MonadError OverlapError check => Format a -> check (Format a)
 checkOverlap f = f <$ regexp f
   where
+    forceApproximation :: (K.ERE c -> K.ERE c) -> FormatRegexp c -> FormatRegexp c
+    forceApproximation g = join formatRegexp (FormatRegexp_OverApproximation . g)
+
     regexp :: MonadError OverlapError check => Format a -> check (FormatRegexp Word8)
     regexp = \case
-      Format_Byte -> pure $ FormatRegexp_Exact K.anyChar
       Format_Magic bs -> pure $ FormatRegexp_Exact $ K.string $ ByteString.unpack bs
+      Format_Pad padByte toLength fa -> do
+        ra <- regexp fa
+        pure $ flip forceApproximation ra $ (<>) $ stimes toLength (K.char padByte)
+      Format_Byte -> pure $ FormatRegexp_Exact K.anyChar
       Format_Product fa fb -> liftA2 (<>) (regexp fa) (regexp fb)
       Format_Sum fa fb -> do
         ra <- regexp fa
@@ -285,7 +323,7 @@ checkOverlap f = f <$ regexp f
       Format_Replicate fn fa -> do
         _ <- regexp fn
         ra <- regexp fa
-        pure $ join formatRegexp (FormatRegexp_OverApproximation . K.star) ra
+        pure $ forceApproximation K.star ra
 
 toGetCategory :: Binary.Get a -> GetCategory ByteString a
 toGetCategory g = GetCategory $ \_ -> g
@@ -354,6 +392,7 @@ decodeRust f = snd $ runWriter $ flip runReaderT 0 $ do
       Format_Product fa fb -> "(" <> decodedType fa <> "," <> decodedType fb <> ")"
       Format_Sum fa fb -> "Either<" <> decodedType fa <> "," <> decodedType fb <> ">"
       Format_Replicate _ fa -> "[" <> decodedType fa <> "]"
+      Format_Pad _ _ fa -> decodedType fa
 
     eitherStruct = do
       line "enum Either<L,R> {"
@@ -376,6 +415,7 @@ decodeRust f = snd $ runWriter $ flip runReaderT 0 $ do
 --        indent $ do
 --          line "return Err(\"Magic number mismatch\")"
         line "}"
+      Format_Pad _ _ _ -> __TODO__
       Format_Byte -> tell "getByte()"
       Format_Product fa fb -> startScope "" $ do
         indented "let a = " *> go fa *> tell ";\n"
@@ -410,6 +450,7 @@ decideSolidity f = snd $ runWriter $ flip runReaderT 0 $ do
       Format_Magic bs -> sequence_ $ reverse $ ByteString.foldl (\xs x -> line (check x) : xs) [] bs
         where
           check b = "if(buffer[cursor++] != " <> T.pack (show b) <> ") { " <> failure <> " }"
+      Format_Pad _ _ _ -> __TODO__
       Format_Byte -> line "cursor++;"
       Format_Product fa fb -> go fa *> go fb
       Format_Sum fa fb -> do
