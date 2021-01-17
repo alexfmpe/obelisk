@@ -15,6 +15,7 @@
 module Frontend where
 
 import Control.Monad (when, (<=<))
+import Control.Monad.Cont
 import Control.Monad.Fix (MonadFix)
 import Data.Functor (void)
 import Data.Functor.Bind (Apply(..))
@@ -80,7 +81,11 @@ frontend = Frontend
 
         justShow = display <=< holdDyn Nothing . fmap Just
 
-        btn x = (x <$) <$> button x
+        btn x = mdo
+          let txt = ffor cnt $ \c -> x <> " (" <> tshow c <> ")"
+          clk <- switchHold never <=< dyn $ ffor txt $ \t -> (x <$) <$> button t
+          cnt <- count clk
+          pure clk
 
         choice = choiceStyle $ const mempty
         choiceFade = choiceStyle $ \x -> if x == "_" then "opacity:0.5;" else mempty
@@ -109,14 +114,15 @@ frontend = Frontend
         choices mkControls mkLayer = do
           start <- replay
           x0 <- mkLayer "0"
-          x1 <- mkLayer x0
-          mkControls >>= \case
-            Just True -> start
-            Just False -> pure ()
-            Nothing -> stop
-          x2 <- mkLayer x1
-          x3 <- mkLayer x2
-          pure x3
+          callCC $ \exit -> do
+            x1 <- mkLayer x0
+            mkControls >>= \case
+              Just True -> start
+              Just False -> pure ()
+              Nothing -> stop --exit "X"
+            x2 <- mkLayer x1
+            x3 <- mkLayer x2
+            pure x3
 
         machineInstant a ma = machine $ do
           pb <- getPostBuild
@@ -124,34 +130,41 @@ frontend = Frontend
           pure $ leftmost [a <$ pb, ev]
 
       example "Wizard" $
-        justShow <=< runWizard $ choices (machine controls) (machine . choice)
+        justShow <=< wizard $ choices
+          (machine controls)
+          (machine . choice)
 
       example "Stack" $
-        justShow <=< runStack $ choices
+        justShow <=< stack $ choices
+          (machine controls)
+          (machine . choice)
+
+      example "BFS" $
+        justShow <=< bfs $ choices
           (machine controls)
           (machine . choice)
 
       example "DFS" $
-        justShow <=< runDFS $ choices
+        justShow <=< dfs $ choices
           (machine controls)
           (machine . choice)
 
       example "Wizard: postBuild" $
-        justShow <=< runWizard $ pure "_"
+        justShow <=< wizard $ pure "_"
 
       example "Stack: postBuild" $
-        justShow <=< runStack $ choices
+        justShow <=< stack $ choices
           (machine controls)
           (machineInstant "_" . choiceFade)
 
       example "Wizard of stacks" $ do
-        justShow <=< runWizard $ do
-          x <- machine $ runStack $ choices (pure $ Just False) $ machine . choice
-          y <- machine $ runStack $ choices (pure $ Just False) $ machine . choice
+        justShow <=< wizard $ do
+          x <- machine $ stack $ choices (pure $ Just False) $ machine . choice
+          y <- machine $ stack $ choices (pure $ Just False) $ machine . choice
           pure (x,y)
 
       example "Stack of workflows" $ mdo
-        ymd <- runStack $ do
+        ymd <- stack $ do
           y <- machine . workflowView $ year clk 2000
           m <- machine . workflowView $ month clk January
           d <- machine . workflowView $ day clk y m 27
@@ -172,11 +185,11 @@ frontend = Frontend
           choices' mkControls mkLayer mkFork = do
             start <- replay
             x0 <- mkFork "0"
-            x0' <- if ".*" `T.isSuffixOf` x0
-                   then fork "0.A" "0.B"
-                   else pure x0
-
-            x1 <- mkLayer x0'
+            x0' <- case x0 of
+              "Stop" -> stop
+              x | ".*" `T.isSuffixOf` x -> fork ["0.A", "0.B"]
+              x -> pure x
+            x1 <- mkLayer x0
             mkControls >>= \case
               Just True -> start
               Just False -> pure ()
@@ -185,9 +198,10 @@ frontend = Frontend
             x3 <- mkLayer x2
             pure x3
 
-        let w = choices' (machine controls) (machine . choice) (machine . choiceFork)
-            s = choices' (machine controls) (machine . choice) (machine . choiceFork)
+        let c = choices' (machine controls) (machine . choice) (machine . choiceFork)
 
-        example "Wizard fork" $ justShow <=< runWizard $ w
-        example "Stack fork" $ justShow <=< runStack $ s
+        example "Wizard fork" $ justShow <=< wizard $ c
+        example "Stack fork" $ justShow <=< stack $ c
+        example "BFS fork" $ justShow <=< bfs $ c
+        example "DFS fork" $ justShow <=< dfs $ c
   }
