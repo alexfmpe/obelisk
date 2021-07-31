@@ -41,6 +41,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Clock (getCurrentTime, addUTCTime)
+import Language.Javascript.JSaddle (JSM)
 import Language.Javascript.JSaddle.Run (syncPoint)
 import Language.Javascript.JSaddle.WebSockets
 import Network.HTTP.Client (Manager, defaultManagerSettings, newManager)
@@ -155,13 +156,13 @@ runWidget conf configs frontend validFullEncoder = do
           return $ runTLSSocket (tlsSettingsMemory certByteString privateKeyByteString)
         _ -> return runSettingsSocket
   runner <- prepareRunner
-  bracket
+  debugWrapper $ \withRefresh registerContext -> bracket
     (bindPortTCPRetry settings (logPortBindErr port) (_runConfig_retryTimeout conf))
     close
     (\skt -> do
         man <- newManager defaultManagerSettings
-        app <- obeliskApp configs defaultConnectionOptions frontend validFullEncoder uri $ fallbackProxy redirectHost redirectPort man
-        runner settings skt app)
+        app <- obeliskApp configs defaultConnectionOptions frontend validFullEncoder uri registerContext $ fallbackProxy redirectHost redirectPort man
+        runner settings skt $ withRefresh app)
 
 obeliskApp
   :: forall frontendRoute backendRoute
@@ -170,24 +171,27 @@ obeliskApp
   -> Frontend (R frontendRoute)
   -> Encoder Identity Identity (R (FullRoute backendRoute frontendRoute)) PageName
   -> URI
+  -> JSM ()
   -> Application
   -> IO Application
-obeliskApp configs opts frontend validFullEncoder uri backend = do
+obeliskApp configs opts frontend validFullEncoder uri registerContext backend = do
   let mode = FrontendMode
         { _frontendMode_hydrate = True
         , _frontendMode_adjustRoute = False
         }
       entryPoint = do
+        registerContext
         runFrontendWithConfigsAndCurrentRoute mode configs validFullEncoder frontend
         syncPoint
   jsaddlePath <- URI.mkPathPiece "jsaddle"
   let jsaddleUri = BSLC.fromStrict $ URI.renderBs $ uri & uriPath %~ (<>[jsaddlePath])
   Right (jsaddleWarpRouteValidEncoder :: Encoder Identity (Either Text) (R JSaddleWarpRoute) PageName) <- return $ checkEncoder jsaddleWarpRouteEncoder
+
   jsaddle <- jsaddleWithAppOr opts entryPoint $ \_ sendResponse -> sendResponse $ W.responseLBS H.status500 [("Content-Type", "text/plain")] "obeliskApp: jsaddle got a bad URL"
   return $ \req sendResponse -> case tryDecode validFullEncoder $ byteStringsToPageName (BS.dropWhile (== (fromIntegral $ fromEnum '/')) $ W.rawPathInfo req) (BS.drop 1 $ W.rawQueryString req) of
     Identity r -> case r of
       FullRoute_Frontend (ObeliskRoute_Resource ResourceRoute_JSaddleWarp) :/ jsaddleRoute -> case jsaddleRoute of
-        JSaddleWarpRoute_JavaScript :/ () -> sendResponse $ W.responseLBS H.status200 [("Content-Type", "application/javascript")] $ jsaddleJs' (Just jsaddleUri) False
+        JSaddleWarpRoute_JavaScript :/ () -> sendResponse $ W.responseLBS H.status200 [("Content-Type", "application/javascript")] $ jsaddleJs' (Just jsaddleUri) True
         _ -> flip jsaddle sendResponse $ req
           { W.pathInfo = fst $ encode jsaddleWarpRouteValidEncoder jsaddleRoute
           }
