@@ -17,7 +17,8 @@ project ./. ({ pkgs, hackGet, ... }: with pkgs.haskell.lib; {
     reflex-dom-core = (hackGet ./dep/reflex-dom) + /reflex-dom-core;
   };
 
-  overrides = self: super: {
-    reflex-dom-core = pkgs.haskell.lib.dontCheck super.reflex-dom-core;
+  overrides = self: super: with pkgs.haskell.lib; {
+    reflex-dom-core = doJailbreak (dontCheck super.reflex-dom-core);
+    reflex-dom = doJailbreak (dontCheck super.reflex-dom);
   };
 })
