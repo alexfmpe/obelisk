@@ -525,7 +525,8 @@ loadPackageIndex packageInfos root = do
 
 baseGhciOptions :: [String]
 baseGhciOptions =
-  [ "-ignore-dot-ghci"
+  [ "-fno-ghci-sandbox"
+  , "-ignore-dot-ghci"
   , "-no-user-package-db"
   , "-hide-all-packages"
   , "-package-env", "-"
