@@ -9,11 +9,14 @@ library
     buildable: False
   build-depends: base
                , common
+               , file-embed
                , frontend
                , obelisk-backend
                , obelisk-route
   exposed-modules:
     Backend
+  other-modules:
+    Backend.TH
   ghc-options: -Wall -Wredundant-constraints -Wincomplete-uni-patterns -Wincomplete-record-updates -O -fno-show-valid-hole-fits
 
 executable backend
