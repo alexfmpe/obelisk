@@ -32,7 +32,7 @@ module Obelisk.Route
   , PageName
   , PathQuery
   , Encoder
-  , EncoderK(..)
+  , EncoderK(..) --TODO: exposing (de)constructor is undesirable
   , EncoderImpl (..)
   , EncoderFunc (..)
 
@@ -48,6 +48,7 @@ module Obelisk.Route
   , encode
   , decode
   , tryDecode
+  , unsafeLowerCategory
   , hoistCheck
   , hoistParse
   , mapSome
@@ -337,9 +338,9 @@ unsafeEncoder = Encoder
 -- Homomorphism law: h (f . g) = h f . h g
 unsafeLowerCategory
   :: Functor check
-  => (forall a b. a `j` b -> a `k` b)
-  -> EncoderK check j decoded encoded
-  -> EncoderK check k decoded encoded
+  => (a `j` b -> a' `k` b')
+  -> EncoderK check j a  b
+  -> EncoderK check k a' b'
 unsafeLowerCategory h = Encoder . fmap h . unEncoder
 
 -- | The internal type used to construct primitive 'Encoder' values.

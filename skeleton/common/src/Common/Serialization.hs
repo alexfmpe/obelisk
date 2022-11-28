@@ -1,5 +1,4 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -16,7 +15,7 @@ import Control.Category
 import Control.Lens (Iso', iso)
 import Control.Monad.Except
 import Control.Monad.State
-import Data.Bool
+import Data.Functor.Identity
 import Data.Semigroupoid
 import Data.Tagged
 import Data.Text (Text)
@@ -35,19 +34,11 @@ import Obelisk.Route
 
 {-
 -- TODO
-checks
+check overlaps in \/
 decoding
 interval length
 incremental
 -}
-
-infixr 6 \/
-(\/) :: Format a c -> Format b c -> Format (Either a b) c
-(\/) = Sum
-
-infixr 7 /\
-(/\) :: Format a c -> Format b c -> Format (a,b) c
-(/\) = Product
 
 -- TODO: generalize?
 -- TODO: Enum class uses Int
@@ -67,11 +58,28 @@ data Format a b where
   Compose :: Format b c -> Format a b -> Format a c
   Id      :: Format a a
 
-  Enum    :: (Enum a, Finite a) => Text -> Format a Tag
+  Enum    :: (Enum a, Finite a) => Text -> Format a Tag --TODO: keep text description?
+
 --  Symbol :: (Show a, Show b) => a -> Vector b -> Format a b --TODO: Show?
 --  Symbol :: a -> Format a a
 -- TODO: dynamic length? how to invert compose of vector?
 --  Vector :: TargetWord -> Format TargetWord b -> Format a b -> Format (Vector a) b
+
+
+infixr 6 \/
+(\/) :: Applicative check => EncoderK check Format a c -> EncoderK check Format b c -> EncoderK check Format (Either a b) c
+ea \/ eb = Encoder $ do
+  fa <- unEncoder ea
+  fb <- unEncoder eb
+  --TODO: check overlaps
+  pure $ Sum fa fb
+
+infixr 7 /\
+(/\) :: Applicative check => EncoderK check Format a c -> EncoderK check Format b c -> EncoderK check Format (a,b) c
+ea /\ eb = Encoder $ do
+  fa <- unEncoder ea
+  fb <- unEncoder eb
+  pure $ Product fa fb
 
 instance Semigroupoid Format where
   o = Compose
@@ -79,8 +87,11 @@ instance Category Format where
   (.) = o
   id = Id
 
-length :: forall a b. Word -> Word -> Format a b -> Word
-length tagBits bitsInB = go
+enum :: (Applicative check, Enum a, Finite a) => Text -> EncoderK check Format a Tag
+enum a = unsafeMkEncoder $ Enum a
+
+length :: forall a b. Word -> Word -> EncoderK Identity Format a b -> Word
+length tagBits bitsInB (Encoder (Identity fmt)) = go fmt
   where
 --    targetWords :: Word -> Word -> Word
 --    targetWords count targetWordCount = 1 + ((count - 1) `div` targetWordCount)
@@ -105,8 +116,8 @@ length tagBits bitsInB = go
 --  Vector len l2b a2b -> length l2b + fromIntegral len * length a2b
 
 --TODO: collapse nested pairs?
-describe :: Format a b -> String
-describe = drawTree . go
+describe :: EncoderK Identity Format a b -> String
+describe (Encoder (Identity fmt)) = drawTree $ go fmt
   where
     go :: Format a b -> Tree String
     go = \case
@@ -122,10 +133,11 @@ describe = drawTree . go
       Enum description -> Node ("Enum: " <> Text.unpack description) []
 --      Symbol a bs -> Node (show a <> " encoded as " <> show bs) []
 
-explain :: Format a Word8 -> String
-explain format = unlines [ "Binary encoding has a length of " <> show (length 8 8 format) <> " bytes. Format is as follows:"
-                         , describe format
-                         ]
+explain :: EncoderK Identity Format a Word8 -> String
+explain format = unlines
+  [ "Binary encoding has a length of " <> show (length 8 8 format) <> " bytes. Format is as follows:"
+  , describe format
+  ]
 
 {-
       --TODO: bug: padding?
@@ -145,23 +157,29 @@ explain format = unlines [ "Binary encoding has a length of " <> show (length 8 
           }
 -}
 
-toEncoderImplBytes
-  :: (MonadError Text check, MonadState Word parse, MonadError Text parse)
-  => Format a Word8 -> EncoderK check (EncoderImpl parse) a (Vector Word8)
-toEncoderImplBytes = toEncoderImpl 8 8
-
-toEncoderImpl
+toEncoderBytes
+  :: (Functor check, MonadState Word parse, MonadError Text parse)
+  => EncoderK check Format a Word8 -> EncoderK check (EncoderImpl parse) a (Vector Word8)
+toEncoderBytes = unsafeLowerCategory $ toEncoderImpl 8 8
+{-
+toEncoder
   :: forall check parse a b. (MonadError Text check, MonadState Word parse, MonadError Text parse)
-  => Word -> Word -> Format a b -> EncoderK check (EncoderImpl parse) a (Vector b)
+  => Word -> Word -> EncoderK check Format a b -> EncoderK check (EncoderImpl parse) a (Vector b)
+toEncoder tagBits bitsInB = unsafeLowerCategory $ toEncoderImpl tagBits bitsInB
+-}
+toEncoderImpl
+  :: forall parse a b. (MonadState Word parse, MonadError Text parse)
+  => Word -> Word -> Format a b -> EncoderImpl parse a (Vector b)
 toEncoderImpl tagBits bitsInB = go
   where
-    go :: Format a' b' -> EncoderK check (EncoderImpl parse) a' (Vector b')
+    go :: Format a' b' -> EncoderImpl parse a' (Vector b')
     go = \case
       --TODO: bug: padding?
-      Sum fx fy -> unsafeEncoder $ do
-        ix <- unEncoder $ go fx
-        iy <- unEncoder $ go fy
-        pure $ EncoderImpl
+      Sum fx fy ->
+        let
+          ix = go fx
+          iy = go fy
+        in EncoderImpl
           { _encoderImpl_encode = \case
               Left  x -> _encoderImpl_encode ix x
               Right y -> _encoderImpl_encode iy y
@@ -173,15 +191,16 @@ toEncoderImpl tagBits bitsInB = go
                 catchError l (const r)
           }
 
-      Zero -> unsafeMkEncoder $ EncoderImpl
+      Zero -> EncoderImpl
         { _encoderImpl_encode = absurd
         , _encoderImpl_decode = const $ throwError "Decoding to void always fails"
         }
 
-      Product fx fy -> unsafeEncoder $ do
-        ix <- unEncoder $ go fx
-        iy <- unEncoder $ go fy
-        pure $ EncoderImpl
+      Product fx fy ->
+        let
+          ix = go fx
+          iy = go fy
+        in EncoderImpl
           { _encoderImpl_encode = \(x, y) -> _encoderImpl_encode ix x <> _encoderImpl_encode iy y
           , _encoderImpl_decode = \bs -> do
               c0 <- get
@@ -191,30 +210,31 @@ toEncoderImpl tagBits bitsInB = go
               pure (x,y)
           }
 
-      One -> unsafeMkEncoder $ EncoderImpl
+      One -> EncoderImpl
         { _encoderImpl_encode = \() -> mempty
         , _encoderImpl_decode = const $ pure ()
         }
 
-      Compose b2c a2b -> unsafeEncoder $ do
-        ib2c <- unEncoder $ go b2c
-        ia2b <- unEncoder $ go a2b
-        pure $ EncoderImpl
+      Compose b2c a2b ->
+        let
+          ib2c = go b2c
+          ia2b = go a2b
+        in EncoderImpl
           { _encoderImpl_encode = _encoderImpl_encode ia2b >=> _encoderImpl_encode ib2c
           , _encoderImpl_decode = \bs -> do
               let
                 chunks :: Word -> Vector x -> parse (Vector (Vector x))
-                chunks n = fmap Vector.fromList . go
+                chunks n = fmap Vector.fromList . f
                   where
-                    go v = case Vector.length v of
+                    f v = case Vector.length v of
                       0 -> pure mempty
                       l | l < fromIntegral n -> throwError "Ran out of bytes while decoding chunk in Compose"
-                      _ -> let (a,b) = Vector.splitAt (fromIntegral n) v in (a :) <$> go b
-              cs <- chunks (length tagBits bitsInB b2c) bs
+                      _ -> let (a,b) = Vector.splitAt (fromIntegral n) v in (a :) <$> f b
+              cs <- chunks (length tagBits bitsInB $ unsafeMkEncoder b2c) bs --TODO: superfluous mkEncoder
               for cs (_encoderImpl_decode ib2c) >>= _encoderImpl_decode ia2b
           }
 
-      Id -> unsafeMkEncoder $ EncoderImpl
+      Id -> EncoderImpl
         { _encoderImpl_encode = Vector.singleton
         , _encoderImpl_decode = \bs -> case bs Vector.!? 0 of
             Nothing -> throwError "Ran out of bytes while decoding Id"
@@ -223,7 +243,7 @@ toEncoderImpl tagBits bitsInB = go
               pure a
         }
 
-      Enum _ -> unsafeMkEncoder $ EncoderImpl
+      Enum _ -> EncoderImpl
         { _encoderImpl_encode = Vector.singleton . fromIntegral . fromEnum
         , _encoderImpl_decode = \bs -> case bs Vector.!? 0 of
             Nothing -> throwError "Ran out of bytes while decoding Enum"
@@ -231,46 +251,6 @@ toEncoderImpl tagBits bitsInB = go
               modify succ
               pure $ toEnum $ fromIntegral b
         }
-
-data Suit
-  = Clubs
-  | Diamonds
-  | Hearts
-  | Spades
-  deriving stock (Eq, Ord, Enum, Bounded, Show)
-  deriving anyclass (Finite, Universe)
-
-data Rank
-  = Two
-  | Three
-  | Four
-  | Five
-  | Six
-  | Seven
-  | Eight
-  | Nine
-  | Ten
-  | Jack
-  | Queen
-  | King
-  | Ace
-  deriving stock (Eq, Ord, Enum, Bounded, Show)
-  deriving anyclass (Finite, Universe)
-
-type Card = (Rank, Suit)
-type Hand = (Card, (Card, Card))
-
-suit :: Format Suit Word8
-suit = Enum "Suit"
-
-rank :: Format Rank Word8
-rank = Enum "Rank"
-
-card :: Format Card Word8
-card = rank /\ suit
-
-ex1 :: Format Hand Word8
-ex1 = card /\ card /\ card
 
 {-
 --  Isomorphism :: Isomorphism a b -> Format a b
