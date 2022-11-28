@@ -24,12 +24,15 @@ Types and functions for defining routes and 'Encoder's.
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 module Obelisk.Route
   ( -- * Primary Types
     R
   , PageName
   , PathQuery
   , Encoder
+  , EncoderK(..)
   , EncoderImpl (..)
   , EncoderFunc (..)
 
@@ -323,11 +326,21 @@ pathLiteralEncoder t e = addPathSegmentEncoder . bimap (unitEncoder t) e . coidl
 -- used to check the validity of the encoder (i.e. that it is total), secondly the monad used for parsing
 -- during the decode phase. The following two parameters are respectively the type of decoded data, and the
 -- encoded type.
-newtype Encoder check parse decoded encoded =
-  Encoder { unEncoder :: check (EncoderImpl parse decoded encoded) }
+type Encoder check parse = EncoderK check (EncoderImpl parse)
+
+newtype EncoderK check k decoded encoded =
+  Encoder { unEncoder :: check (decoded `k` encoded) }
 
 unsafeEncoder :: check (EncoderImpl parse decoded encoded) -> Encoder check parse decoded encoded
 unsafeEncoder = Encoder
+
+-- Homomorphism law: h (f . g) = h f . h g
+unsafeLowerCategory
+  :: Functor check
+  => (forall a b. a `j` b -> a `k` b)
+  -> EncoderK check j decoded encoded
+  -> EncoderK check k decoded encoded
+unsafeLowerCategory h = Encoder . fmap h . unEncoder
 
 -- | The internal type used to construct primitive 'Encoder' values.
 -- Law:
@@ -356,11 +369,12 @@ encode (Encoder (Identity impl)) = _encoderImpl_encode impl
 
 -- | This is a primitive used to build encoders which can't fail to check. It should not be used unless one is
 -- reasonably certain that the law given for 'EncoderImpl' above holds.
-unsafeMkEncoder :: (Applicative check) => EncoderImpl parse decoded encoded -> Encoder check parse decoded encoded
-unsafeMkEncoder impl = Encoder (pure impl)
+--unsafeMkEncoder :: (Applicative check) => EncoderImpl parse decoded encoded -> Encoder check parse decoded encoded
+unsafeMkEncoder :: (Applicative check) => decoded `k` encoded -> EncoderK check k decoded encoded
+unsafeMkEncoder = Encoder . pure
 
 -- | Transform the check monad of an 'Encoder' by applying a natural transformation.
-hoistCheck :: (forall t. check t -> check' t) -> Encoder check parse a b -> Encoder check' parse a b
+hoistCheck :: (forall t. check t -> check' t) -> EncoderK check parse a b -> EncoderK check' parse a b
 hoistCheck f (Encoder x) = Encoder (f x)
 
 -- | Transform the parse monad of an 'Encoder' by applying a natural transformation.
@@ -370,25 +384,28 @@ hoistParse f (Encoder x) = Encoder (fmap (\(EncoderImpl dec enc) -> EncoderImpl 
 
 -- | Check an 'Encoder', transforming it into one whose check monad is anything we want (usually Identity).
 checkEncoder :: (Applicative check', Functor check)
-  => Encoder check parse decoded encoded
-  -> check (Encoder check' parse decoded encoded)
+  => EncoderK check parse decoded encoded
+  -> check (EncoderK check' parse decoded encoded)
 checkEncoder = fmap unsafeMkEncoder . unEncoder
 
-instance (Applicative check, Monad parse) => Semigroupoid (Encoder check parse) where
-  Encoder f `o` Encoder g = Encoder $ liftA2 (.) f g
+instance (Applicative check, Semigroupoid k) => Semigroupoid (EncoderK check k) where
+  Encoder f `o` Encoder g = Encoder $ liftA2 o f g
 
-instance (Applicative check, Monad parse) => Category (Encoder check parse) where
+instance (Applicative check, Semigroupoid k, Category k) => Category (EncoderK check k) where
   id = Encoder $ pure id
   (.) = o
 
+instance Monad parse => Semigroupoid (EncoderImpl parse) where
+  f `o` g = EncoderImpl
+    { _encoderImpl_decode = _encoderImpl_decode g <=< _encoderImpl_decode f
+    , _encoderImpl_encode = _encoderImpl_encode f . _encoderImpl_encode g
+    }
+
 instance Monad parse => Category (EncoderImpl parse) where
+  (.) = o
   id = EncoderImpl
     { _encoderImpl_decode = pure
     , _encoderImpl_encode = id
-    }
-  f . g = EncoderImpl
-    { _encoderImpl_decode = _encoderImpl_decode g <=< _encoderImpl_decode f
-    , _encoderImpl_encode = _encoderImpl_encode f . _encoderImpl_encode g
     }
 
 instance Monad parse => PFunctor (,) (EncoderImpl parse) (EncoderImpl parse) where

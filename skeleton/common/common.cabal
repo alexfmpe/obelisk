@@ -6,9 +6,13 @@ build-type: Simple
 library
   hs-source-dirs: src
   build-depends: base
+               , lens
                , obelisk-route
                , mtl
+               , semigroupoids
+               , tagged
                , text
+               , vector
   exposed-modules:
     Common.Api
     Common.Route
