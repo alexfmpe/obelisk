@@ -36,6 +36,7 @@ import Obelisk.Route
 -- TODO
 check overlaps in \/
 decoding
+isos
 interval length
 incremental
 -}
@@ -156,17 +157,32 @@ explain format = unlines
                 _ -> throwError "Invalid tag"
           }
 -}
+{-
+runParser :: Format a b -> (b -> Either Text a)
+runParser
+-}
+
+first :: Monad parse => parse a -> (a -> parse b) -> parse (a, b)
+first fa fb = do
+  a <- fa
+  b <- fb a
+  pure (a,b)
+
+x :: Applicative parse => parse Word
+x = pure 0
+
+xx :: Monad parse => parse (Word, (Word, Word))
+xx = first x $ \_ -> first x $ \_ -> x
+
+--firstCont :: ContT parse a
+--firstCont =
+-- :: MonadState Word parse => ? -> parse a -> parse b -> parse (Either a b)
 
 toEncoderBytes
   :: (Functor check, MonadState Word parse, MonadError Text parse)
   => EncoderK check Format a Word8 -> EncoderK check (EncoderImpl parse) a (Vector Word8)
 toEncoderBytes = unsafeLowerCategory $ toEncoderImpl 8 8
-{-
-toEncoder
-  :: forall check parse a b. (MonadError Text check, MonadState Word parse, MonadError Text parse)
-  => Word -> Word -> EncoderK check Format a b -> EncoderK check (EncoderImpl parse) a (Vector b)
-toEncoder tagBits bitsInB = unsafeLowerCategory $ toEncoderImpl tagBits bitsInB
--}
+
 toEncoderImpl
   :: forall parse a b. (MonadState Word parse, MonadError Text parse)
   => Word -> Word -> Format a b -> EncoderImpl parse a (Vector b)
