@@ -276,6 +276,7 @@ type (:.) = (,)
 #if __GLASGOW_HASKELL__ >= 810
 {-# COMPLETE (:.) #-}
 #else
+{-
 {-# WARNING (:.)
   [ "Use of this pattern in GHC < 8.10 will result in spurious non-exhaustive warnings at every use site."
   , "We cannot provide a COMPLETE pragma to silence these due to a GHC bug: https://gitlab.haskell.org/ghc/ghc/issues/17729."
@@ -283,6 +284,7 @@ type (:.) = (,)
   , "Instead, you should use (,) directly until you can switch to GHC >= 8.10, where the COMPLETE pragma is reinstated."
   ]
   #-}
+-}
 #endif
 #endif
 pattern (:.) :: a -> b -> a :. b

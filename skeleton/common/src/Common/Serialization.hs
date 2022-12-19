@@ -12,7 +12,7 @@ module Common.Serialization where
 import Prelude hiding (length, id, (.))
 
 import Control.Category
-import Control.Lens (Iso', iso)
+--import Control.Lens (Iso', iso)
 import Control.Monad.Except
 import Control.Monad.State
 import Data.Functor.Identity
@@ -29,7 +29,7 @@ import Data.Void
 import Data.Word
 import Numeric.Natural
 
-import Common.Route
+--import Common.Route
 import Obelisk.Route
 
 {-
@@ -168,11 +168,11 @@ first fa fb = do
   b <- fb a
   pure (a,b)
 
-x :: Applicative parse => parse Word
-x = pure 0
+z :: Applicative parse => parse Word
+z = pure 0
 
-xx :: Monad parse => parse (Word, (Word, Word))
-xx = first x $ \_ -> first x $ \_ -> x
+zz :: Monad parse => parse (Word, (Word, Word))
+zz = first z $ \_ -> first z $ \_ -> z
 
 --firstCont :: ContT parse a
 --firstCont =

@@ -73,8 +73,7 @@ backend = Backend
           let
             enc = toEncoderBytes fmt
             e = encode @(StateT Word (Either Text)) enc $
-              ((Ace, Spades), ((Queen, Hearts), (Two, Clubs)))
-              --((Ace, Spades) /\ (Queen, Hearts) /\ (Two, Clubs))
+              (Ace, Spades) :. (Queen, Hearts) :. (Two, Clubs)
             d = flip evalStateT 0 $ tryDecode enc $ e
 
           putStrLn $ explain fmt
