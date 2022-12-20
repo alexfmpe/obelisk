@@ -96,7 +96,10 @@ backend = Backend
 lastCard :: MonadError Text m => Vector Word8 -> Format Hand Word8 -> m Card
 lastCard v f =
   let
-    (f', v') = flip runState v $ snd f >>= snd
+--    meh = snd f >>= snd
+    meh = toHaskBytes $ Snd . Snd
+
+    (f', v') = flip runState v $ meh f
     impl = toEncoderBytes f'
     d = flip evalStateT 0 $ tryDecode impl v'
   in
