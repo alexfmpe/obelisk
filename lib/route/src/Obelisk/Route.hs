@@ -32,7 +32,7 @@ module Obelisk.Route
   , PageName
   , PathQuery
   , Encoder
-  , EncoderK(..) --TODO: exposing (de)constructor is undesirable
+  , EncoderK (..) --TODO: exposing (de)constructor is undesirable
   , EncoderImpl (..)
   , EncoderFunc (..)
 
@@ -44,6 +44,7 @@ module Obelisk.Route
   , pattern (:/)
   , unsafeEncoder
   , checkEncoder
+  , extractEncoder
   , unsafeMkEncoder
   , encode
   , decode
@@ -391,6 +392,9 @@ checkEncoder :: (Applicative check', Functor check)
   -> check (EncoderK check' parse decoded encoded)
 checkEncoder = fmap unsafeMkEncoder . unEncoder
 
+extractEncoder :: EncoderK Identity k decoded encoded -> decoded `k` encoded
+extractEncoder = runIdentity . unEncoder
+
 instance (Applicative check, Semigroupoid k) => Semigroupoid (EncoderK check k) where
   Encoder f `o` Encoder g = Encoder $ liftA2 o f g
 
@@ -623,13 +627,13 @@ pathComponentEncoder
   => (forall a. p a -> SegmentResult check parse a)
   -> Encoder check parse (R p) PageName
 pathComponentEncoder f = Encoder $ do
-  let extractEncoder = \case
+  let extractEnc = \case
         PathEnd e -> first (unitEncoder []) . coidl . e
         PathSegment _ e -> e
       extractPathSegment = \case
         PathEnd _ -> Nothing
         PathSegment t _ -> Just t
-  EncoderFunc f' <- checkEnum1EncoderFunc (extractEncoder . f)
+  EncoderFunc f' <- checkEnum1EncoderFunc (extractEnc . f)
   unEncoder (pathComponentEncoderImpl (enum1Encoder (extractPathSegment . f)) f')
 
 pathComponentEncoderImpl :: forall check parse p. (Monad check, Monad parse)

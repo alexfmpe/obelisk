@@ -1,17 +1,20 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 module Backend where
 
-import Prelude hiding (length, id, (.))
+import Prelude hiding (length, id, snd, (.))
 
 import Control.Concurrent
+import Control.Monad.Except
 import Control.Monad.State
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Data.Vector
 import Data.Universe
 import Data.Word
 
@@ -69,19 +72,34 @@ backend = Backend
 
       case checkEncoder ex1 of
         Left err -> print $ Text.unpack err
-        Right fmt -> do
+        Right enc -> do
           let
-            enc = toEncoderBytes fmt
-            e = encode @(StateT Word (Either Text)) enc $
+            fmt = extractEncoder enc
+            impl = toEncoderBytes fmt
+            e = encode @(StateT Word (Either Text)) impl $
               (Ace, Spades) :. (Queen, Hearts) :. (Two, Clubs)
             d = flip evalStateT 0 $ tryDecode enc $ e
 
           putStrLn $ explain fmt
           print e
           print d
+
+          print $ lastCard
+
   , _backend_routeEncoder = fullRouteEncoder
   }
 
+lastCard :: MonadError Text m => Vector Word8 -> Format Hand Word8 -> m Card
+lastCard v f =
+  let
+    (f', v') = flip runState v $ snd f >>= snd
+    enc = toEncoderBytes $ unsafeMkEncoder f'
+    d = flip evalStateT 0 $ tryDecode enc v'
+  in
+    d
+--lastCard = flip $ \f -> evalState $ state $ \v  ->
+
+--  snd' :: Format (a, b) (Vector Word8) -> State (Vector Word8) (Format b (Vector Word8))
 
 {-
 ex1 :: Format Card Word8

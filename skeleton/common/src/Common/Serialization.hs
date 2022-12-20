@@ -9,8 +9,9 @@
 {-# LANGUAGE TypeOperators #-}
 module Common.Serialization where
 
-import Prelude hiding (length, id, (.))
+import Prelude hiding (length, id, snd, (.))
 
+import Control.Applicative (liftA2)
 import Control.Category
 --import Control.Lens (Iso', iso)
 import Control.Monad.Except
@@ -32,6 +33,9 @@ import Numeric.Natural
 --import Common.Route
 import Obelisk.Route
 
+--------------------------------------------------------------------------------
+-- Universe of discourse
+--------------------------------------------------------------------------------
 {-
 -- TODO
 check overlaps in \/
@@ -66,27 +70,40 @@ data Format a b where
 -- TODO: dynamic length? how to invert compose of vector?
 --  Vector :: TargetWord -> Format TargetWord b -> Format a b -> Format (Vector a) b
 
+{-
+--  Isomorphism :: Isomorphism a b -> Format a b
+data Isomorphism a b where
+  Iso_Id   :: Isomorphism a a
+  Iso_Swap :: Isomorphism (a,b) (b,a)
 
+--ex1 :: Format Word8 Word8
+--ex1 = Isomorphism Iso_Id
+-}
+
+
+infixr 7 /\
+(/\) :: Applicative check => EncoderK check Format a c -> EncoderK check Format b c -> EncoderK check Format (a,b) c
+Encoder a /\ Encoder b = Encoder $ liftA2 Product a b
+
+--TODO: untagged sums
 infixr 6 \/
 (\/) :: Applicative check => EncoderK check Format a c -> EncoderK check Format b c -> EncoderK check Format (Either a b) c
 ea \/ eb = Encoder $ do
   fa <- unEncoder ea
   fb <- unEncoder eb
-  --TODO: check overlaps
+  --TODO: sneak in tag
   pure $ Sum fa fb
 
-infixr 7 /\
-(/\) :: Applicative check => EncoderK check Format a c -> EncoderK check Format b c -> EncoderK check Format (a,b) c
-ea /\ eb = Encoder $ do
-  fa <- unEncoder ea
-  fb <- unEncoder eb
-  pure $ Product fa fb
-
+-- TODO: Go for Sum/Product ish Bifunctor?
 instance Semigroupoid Format where
   o = Compose
 instance Category Format where
   (.) = o
   id = Id
+
+--------------------------------------------------------------------------------
+-- Combinators
+--------------------------------------------------------------------------------
 
 enum :: (Applicative check, Enum a, Finite a) => Text -> EncoderK check Format a Tag
 enum a = unsafeMkEncoder $ Enum a
@@ -157,26 +174,61 @@ explain format = unlines
                 _ -> throwError "Invalid tag"
           }
 -}
+
+--------------------------------------------------------------------------------
+-- Ad-hoc parsing
+--------------------------------------------------------------------------------
 {-
 runParser :: Format a b -> (b -> Either Text a)
 runParser
 -}
 
-first :: Monad parse => parse a -> (a -> parse b) -> parse (a, b)
-first fa fb = do
+pair :: Monad parse => parse a -> (a -> parse b) -> parse b
+pair fa fb = do
   a <- fa
-  b <- fb a
-  pure (a,b)
+  fb a
+
+both :: Monad parse => parse a -> (a -> parse b) -> parse (a, b)
+both fa fb = pair fa $ fmap . (,) <*> fb
+
+data Parser m a s a' = Parser (Format a s) (StateT s m a')
+
+pproduct :: Monad m => Parser m a s a' -> Parser m b s b' -> Parser m (a,b) s (a', b')
+pproduct (Parser fx px) (Parser fy py) = Parser (Product fx fy) $ liftA2 (,) px py
+
+-- more like Writer, or rather, Eraser?
+snd :: Format (a, b) Word8 -> State (Vector Word8) (Format b Word8)
+snd f = state $ \v -> case f of
+  Product a b -> (b, Vector.drop n v)
+    where n = fromIntegral $ length 8 8 $ unsafeMkEncoder a
+  --TODO: compose?
+  Compose (Product a' b') x -> undefined --TODO
+
+fst :: (Format (a, b) Word8, Vector Word8) -> (Format a Word8, Vector Word8)
+fst (Product a b, v) = (a, Vector.drop n v)
+  where n = fromIntegral $ length 8 8 $ unsafeMkEncoder b
+
+{-
+first :: Monad parse => parse a -> parse (a,b)
+first fa = do
+  a <- fa
+
+  pure a
+-}
 
 z :: Applicative parse => parse Word
 z = pure 0
 
-zz :: Monad parse => parse (Word, (Word, Word))
-zz = first z $ \_ -> first z $ \_ -> z
+zz :: Monad parse => parse (Word :. Word :. Word)
+zz = both z $ \_ -> both z $ \_ -> z
 
 --firstCont :: ContT parse a
 --firstCont =
 -- :: MonadState Word parse => ? -> parse a -> parse b -> parse (Either a b)
+
+--------------------------------------------------------------------------------
+-- Lowerings
+--------------------------------------------------------------------------------
 
 toEncoderBytes
   :: (Functor check, MonadState Word parse, MonadError Text parse)
@@ -267,13 +319,3 @@ toEncoderImpl tagBits bitsInB = go
               modify succ
               pure $ toEnum $ fromIntegral b
         }
-
-{-
---  Isomorphism :: Isomorphism a b -> Format a b
-data Isomorphism a b where
-  Iso_Id   :: Isomorphism a a
-  Iso_Swap :: Isomorphism (a,b) (b,a)
-
---ex1 :: Format Word8 Word8
---ex1 = Isomorphism Iso_Id
--}
