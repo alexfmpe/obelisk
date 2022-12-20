@@ -9,6 +9,7 @@ module Backend where
 
 import Prelude hiding (length, id, snd, (.))
 
+import Control.Category
 import Control.Concurrent
 import Control.Monad.Except
 import Control.Monad.State
@@ -60,8 +61,11 @@ rank = enum "Rank"
 card :: Applicative check => EncoderK check Format Card Word8
 card = rank /\ suit
 
+wtf :: Applicative check => EncoderK check Format Card Word8
+wtf = id . card . id
+
 ex1 :: Applicative check => EncoderK check Format Hand Word8
-ex1 = card /\ card /\ card
+ex1 = id . (card /\ card /\ card) . id
 
 backend :: Backend BackendRoute FrontendRoute
 backend = Backend

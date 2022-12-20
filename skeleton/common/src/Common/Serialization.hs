@@ -1,7 +1,10 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RankNTypes #-}
@@ -13,6 +16,7 @@ import Prelude hiding (length, id, snd, (.))
 
 import Control.Applicative (liftA2)
 import Control.Category
+import Control.Categorical.Bifunctor
 --import Control.Lens (Iso', iso)
 import Control.Monad.Except
 import Control.Monad.State
@@ -53,6 +57,8 @@ type TargetWord = Word8
 
 -- (a -> [b], [b] -> Maybe a)
 --   Sum     :: Format Tag c -> Format a c -> Format b c -> Format (Either a b) c
+
+--TODO: check/note/leverage distribution of compose over product and product over sum - likewise for absortion
 data Format a b where
   Sum     :: Format a c -> Format b c -> Format (Either a b) c
   Zero    :: Format Void c
@@ -101,13 +107,12 @@ instance Category Format where
   (.) = o
   id = Id
 
---------------------------------------------------------------------------------
--- Combinators
---------------------------------------------------------------------------------
-
 enum :: (Applicative check, Enum a, Finite a) => Text -> EncoderK check Format a Tag
 enum a = unsafeMkEncoder $ Enum a
 
+--------------------------------------------------------------------------------
+-- Eliminators
+--------------------------------------------------------------------------------
 length :: forall a b. Word -> Word -> Format a b -> Word
 length tagBits bitsInB = go
   where
@@ -175,46 +180,58 @@ explain format = unlines
           }
 -}
 
+
 --------------------------------------------------------------------------------
--- Ad-hoc parsing
+-- Decombinators
 --------------------------------------------------------------------------------
+newtype Projection s x y = Projection (Format x s -> State (Vector s) (Format y s))
+
+instance Semigroupoid (Projection s) where
+  Projection g `o` Projection f = Projection (g <=< f)
+instance Category (Projection s) where
+  (.) = o
+  id = Projection pure
+
+instance PFunctor (,) (Projection Word8) (Projection Word8) where
+  first :: forall a b c. Projection Word8 a b -> Projection Word8 (a, c) (b, c)
+  first (Projection f) = Projection $ \fac -> state $ \v -> go v fac
+    where
+      go :: Vector Word8 -> Format (a,c) Word8 -> (Format (b,c) Word8, Vector Word8)
+      go v = \case
+        Product fmt_a fmt_c ->
+          let (fmt_b, v') = runState (f fmt_a) v
+          in (Product fmt_b fmt_c, v')
+        Compose fmt_g fmt_f -> case fmt_f of
+          Id -> go v fmt_g
+          Product fmt_a fmt_c -> go v $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
+          Compose fmt_fg fmt_ff -> go v $ (fmt_g . fmt_fg) . fmt_ff
+
+newtype Pass s x y = Pass ((Vector s, Format x s) -> (Vector s, Format y s))
 {-
-runParser :: Format a b -> (b -> Either Text a)
-runParser
+second :: forall a b c. Projection Word8 a b -> Projection Word8 (c, a) (c, b)
+second (Projection f) = Projection $ \fca -> state $ \v -> go v fca
+  where
+    go :: Vector Word8 -> Format (c,a) Word8 -> (Format (c,b) Word8, Vector Word8)
+    go v = \case
+      Product a b ->
 -}
 
-pair :: Monad parse => parse a -> (a -> parse b) -> parse b
-pair fa fb = do
-  a <- fa
-  fb a
-
-both :: Monad parse => parse a -> (a -> parse b) -> parse (a, b)
-both fa fb = pair fa $ fmap . (,) <*> fb
-
-data Parser m a s a' = Parser (Format a s) (StateT s m a')
-
-pproduct :: Monad m => Parser m a s a' -> Parser m b s b' -> Parser m (a,b) s (a', b')
-pproduct (Parser fx px) (Parser fy py) = Parser (Product fx fy) $ liftA2 (,) px py
-
--- more like Writer, or rather, Eraser?
+-- more like reverse-Writer: Eraser?
 snd :: Format (a, b) Word8 -> State (Vector Word8) (Format b Word8)
-snd f = state $ \v -> case f of
-  Product a b -> (b, Vector.drop n v)
-    where n = fromIntegral $ length 8 8 a
-  --TODO: compose?
-  Compose (Product a' b') x -> undefined --TODO
+snd pair = state $ \v -> go v pair
+  where
+    go :: Vector Word8 -> Format (x,y) Word8 -> (Format y Word8, Vector Word8)
+    go v = \case
+      Product a b -> (b, Vector.drop n v)
+        where n = fromIntegral $ length 8 8 a
+      Compose g f -> case f of
+        Id -> go v g
+        Product a b -> go v $ Product (g `Compose` a) (g `Compose` b)
+        Compose fb fa -> go v $ (g `Compose` fb) `Compose` fa
 
 fst :: (Format (a, b) Word8, Vector Word8) -> (Format a Word8, Vector Word8)
-fst (Product a b, v) = (a, Vector.drop n v)
+fst (Product a b, v) = (a, Vector.drop n v) --TODO: wrong
   where n = fromIntegral $ length 8 8 b
-
-{-
-first :: Monad parse => parse a -> parse (a,b)
-first fa = do
-  a <- fa
-
-  pure a
--}
 
 z :: Applicative parse => parse Word
 z = pure 0
@@ -222,9 +239,21 @@ z = pure 0
 zz :: Monad parse => parse (Word :. Word :. Word)
 zz = both z $ \_ -> both z $ \_ -> z
 
---firstCont :: ContT parse a
---firstCont =
--- :: MonadState Word parse => ? -> parse a -> parse b -> parse (Either a b)
+--------------------------------------------------------------------------------
+-- Ad-hoc parsing
+--------------------------------------------------------------------------------
+ppair :: Monad parse => parse a -> (a -> parse b) -> parse b
+ppair fa fb = do
+  a <- fa
+  fb a
+
+both :: Monad parse => parse a -> (a -> parse b) -> parse (a, b)
+both fa fb = ppair fa $ fmap . (,) <*> fb
+
+data Parser m a s a' = Parser (Format a s) (StateT s m a')
+
+pproduct :: Monad m => Parser m a s a' -> Parser m b s b' -> Parser m (a,b) s (a', b')
+pproduct (Parser fx px) (Parser fy py) = Parser (Product fx fy) $ liftA2 (,) px py
 
 --------------------------------------------------------------------------------
 -- Lowerings
