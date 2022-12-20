@@ -78,13 +78,13 @@ backend = Backend
             impl = toEncoderBytes fmt
             e = encode @(StateT Word (Either Text)) impl $
               (Ace, Spades) :. (Queen, Hearts) :. (Two, Clubs)
-            d = flip evalStateT 0 $ tryDecode enc $ e
+            d = flip evalStateT 0 $ tryDecode impl $ e
 
           putStrLn $ explain fmt
           print e
           print d
 
-          print $ lastCard
+--          print $ lastCard
 
   , _backend_routeEncoder = fullRouteEncoder
   }
@@ -93,8 +93,8 @@ lastCard :: MonadError Text m => Vector Word8 -> Format Hand Word8 -> m Card
 lastCard v f =
   let
     (f', v') = flip runState v $ snd f >>= snd
-    enc = toEncoderBytes $ unsafeMkEncoder f'
-    d = flip evalStateT 0 $ tryDecode enc v'
+    impl = toEncoderBytes f'
+    d = flip evalStateT 0 $ tryDecode impl v'
   in
     d
 --lastCard = flip $ \f -> evalState $ state $ \v  ->

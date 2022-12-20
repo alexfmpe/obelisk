@@ -108,8 +108,8 @@ instance Category Format where
 enum :: (Applicative check, Enum a, Finite a) => Text -> EncoderK check Format a Tag
 enum a = unsafeMkEncoder $ Enum a
 
-length :: forall a b. Word -> Word -> EncoderK Identity Format a b -> Word
-length tagBits bitsInB (Encoder (Identity fmt)) = go fmt
+length :: forall a b. Word -> Word -> Format a b -> Word
+length tagBits bitsInB = go
   where
 --    targetWords :: Word -> Word -> Word
 --    targetWords count targetWordCount = 1 + ((count - 1) `div` targetWordCount)
@@ -134,8 +134,8 @@ length tagBits bitsInB (Encoder (Identity fmt)) = go fmt
 --  Vector len l2b a2b -> length l2b + fromIntegral len * length a2b
 
 --TODO: collapse nested pairs?
-describe :: EncoderK Identity Format a b -> String
-describe (Encoder (Identity fmt)) = drawTree $ go fmt
+describe :: Format a b -> String
+describe = drawTree . go
   where
     go :: Format a b -> Tree String
     go = \case
@@ -151,7 +151,7 @@ describe (Encoder (Identity fmt)) = drawTree $ go fmt
       Enum description -> Node ("Enum: " <> Text.unpack description) []
 --      Symbol a bs -> Node (show a <> " encoded as " <> show bs) []
 
-explain :: EncoderK Identity Format a Word8 -> String
+explain :: Format a Word8 -> String
 explain format = unlines
   [ "Binary encoding has a length of " <> show (length 8 8 format) <> " bytes. Format is as follows:"
   , describe format
@@ -200,13 +200,13 @@ pproduct (Parser fx px) (Parser fy py) = Parser (Product fx fy) $ liftA2 (,) px 
 snd :: Format (a, b) Word8 -> State (Vector Word8) (Format b Word8)
 snd f = state $ \v -> case f of
   Product a b -> (b, Vector.drop n v)
-    where n = fromIntegral $ length 8 8 $ unsafeMkEncoder a
+    where n = fromIntegral $ length 8 8 a
   --TODO: compose?
   Compose (Product a' b') x -> undefined --TODO
 
 fst :: (Format (a, b) Word8, Vector Word8) -> (Format a Word8, Vector Word8)
 fst (Product a b, v) = (a, Vector.drop n v)
-  where n = fromIntegral $ length 8 8 $ unsafeMkEncoder b
+  where n = fromIntegral $ length 8 8 b
 
 {-
 first :: Monad parse => parse a -> parse (a,b)
@@ -231,9 +231,9 @@ zz = both z $ \_ -> both z $ \_ -> z
 --------------------------------------------------------------------------------
 
 toEncoderBytes
-  :: (Functor check, MonadState Word parse, MonadError Text parse)
-  => EncoderK check Format a Word8 -> EncoderK check (EncoderImpl parse) a (Vector Word8)
-toEncoderBytes = unsafeLowerCategory $ toEncoderImpl 8 8
+  :: (MonadState Word parse, MonadError Text parse)
+  => Format a Word8 -> Encoder Identity parse a (Vector Word8)
+toEncoderBytes = unsafeMkEncoder . toEncoderImpl 8 8
 
 toEncoderImpl
   :: forall parse a b. (MonadState Word parse, MonadError Text parse)
@@ -298,7 +298,7 @@ toEncoderImpl tagBits bitsInB = go
                       0 -> pure mempty
                       l | l < fromIntegral n -> throwError "Ran out of bytes while decoding chunk in Compose"
                       _ -> let (a,b) = Vector.splitAt (fromIntegral n) v in (a :) <$> f b
-              cs <- chunks (length tagBits bitsInB $ unsafeMkEncoder b2c) bs --TODO: superfluous mkEncoder
+              cs <- chunks (length tagBits bitsInB b2c) bs
               for cs (_encoderImpl_decode ib2c) >>= _encoderImpl_decode ia2b
           }
 
