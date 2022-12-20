@@ -84,7 +84,7 @@ backend = Backend
           print e
           print d
 
---          print $ lastCard
+          print $ either Left Right $ lastCard e fmt
 
   , _backend_routeEncoder = fullRouteEncoder
   }
