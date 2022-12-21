@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
@@ -36,6 +37,8 @@ import Numeric.Natural
 
 --import Common.Route
 import Obelisk.Route
+
+import Debug.Trace
 
 --------------------------------------------------------------------------------
 -- Universe of discourse
@@ -70,6 +73,8 @@ data Format a b where
   Id      :: Format a a
 
   Enum    :: (Enum a, Finite a) => Text -> Format a Tag --TODO: keep text description?
+
+deriving instance Show (Format a b)
 
 --  Symbol :: (Show a, Show b) => a -> Vector b -> Format a b --TODO: Show?
 --  Symbol :: a -> Format a a
@@ -190,7 +195,6 @@ data Deformatting s a b where
 
   First  :: Deformatting s a c -> Deformatting s (a,b) (c,b)
   Second :: Deformatting s b c -> Deformatting s (a,b) (a,c)
---  First :: Format (a,b) -> Deformatting a c -> Deformatting (c,b)
 
   IdD :: Deformatting s a a
   ComposeD :: Deformatting s b c -> Deformatting s a b -> Deformatting s a c
@@ -208,106 +212,43 @@ instance Bifunctor (,) (Deformatting s) (Deformatting s) (Deformatting s) where
   bimap f s = First f . Second s
 
 -- more like reverse-Writer: Eraser?
-toHaskBytes :: Deformatting Word8 x y -> Format x Word8 -> State (Vector Word8) (Format y Word8)
+toHaskBytes :: forall x y. Deformatting Word8 x y -> Format x Word8 -> State (Vector Word8) (Format y Word8)
 toHaskBytes = \case
-      IdD -> pure
-      ComposeD dg df -> toHaskBytes dg <=< toHaskBytes df
-      Snd -> state . flip go
-        where
-          go :: Vector Word8 -> Format (x,y) Word8 -> (Format y Word8, Vector Word8)
-          go v = \case
-            Product a b -> (b, Vector.drop n v)
-              where n = fromIntegral $ length 8 8 a
-            Compose g f -> case f of
-              Id -> go v g
-              Product a b -> go v $ Product (g `Compose` a) (g `Compose` b)
-              Compose fb fa -> go v $ (g `Compose` fb) `Compose` fa
-      First df -> go
-        where
-     --      go :: forall a b c. Vector Word8 -> Format (a,c) Word8 -> (Format (b,c) Word8, Vector Word8)
-          go = \case
-            Product fmt_a fmt_c -> do
-              fmt_b <- toHaskBytes df fmt_a
-              pure $ Product fmt_b fmt_c
-            Compose fmt_g fmt_f -> case fmt_f of
-              Id -> go fmt_g
-              Product fmt_a fmt_c -> go $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
-              Compose fmt_fg fmt_ff -> go $ (fmt_g . fmt_fg) . fmt_ff
+  IdD -> pure
+  ComposeD dg df -> toHaskBytes dg <=< toHaskBytes df
+  Snd -> state . go
+    where
+      go :: Format (a,b) Word8 -> Vector Word8 -> (Format b Word8, Vector Word8)
+      go = \case
+        Product a b -> \v -> (b, Vector.drop n v)
+          where n = fromIntegral $ length 8 8 a
+        Compose g f -> case f of
+          Id -> go g
+          Product a b -> go $ Product (g `Compose` a) (g `Compose` b)
+          Compose fb fa -> go $ (g `Compose` fb) `Compose` fa
+  First df -> go
+    where
+      -- go :: Format (a,c) Word8 -> State (Vector Word8) (Format (b,c) Word8) --TODO: type
+      go = \case
+        Product fmt_a fmt_c -> do
+          fmt_b <- toHaskBytes df fmt_a
+          pure $ Product fmt_b fmt_c
+        Compose fmt_g fmt_f -> case fmt_f of
+          Id -> go fmt_g
+          Product fmt_a fmt_c -> go $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
+          Compose fmt_fg fmt_ff -> go $ (fmt_g . fmt_fg) . fmt_ff
 
-{-
-      IdD -> (,)
-      ComposeD dg df -> runState . (state . go' dg <=< state . go' df)
-      Snd -> flip go
-        where
-          go :: Vector Word8 -> Format (x,y) Word8 -> (Format y Word8, Vector Word8)
-          go v = \case
-            Product a b -> (b, Vector.drop n v)
-              where n = fromIntegral $ length 8 8 a
-            Compose g f -> case f of
-              Id -> go v g
-              Product a b -> go v $ Product (g `Compose` a) (g `Compose` b)
-              Compose fb fa -> go v $ (g `Compose` fb) `Compose` fa
-
-      First df -> flip go
-        where
-     --      go :: forall a b c. Vector Word8 -> Format (a,c) Word8 -> (Format (b,c) Word8, Vector Word8)
-          go v = \case
-            Product fmt_a fmt_c ->
-              let (fmt_b, v') = go' df fmt_a v
-              in (Product fmt_b fmt_c, v')
-            Compose fmt_g fmt_f -> case fmt_f of
-              Id -> go v fmt_g
-              Product fmt_a fmt_c -> go v $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
-              Compose fmt_fg fmt_ff -> go v $ (fmt_g . fmt_fg) . fmt_ff
--}
 snd = toHaskBytes Snd
 
-newtype Projection s x y = Projection (Format x s -> State (Vector s) (Format y s))
-
-instance Semigroupoid (Projection s) where
-  Projection g `o` Projection f = Projection (g <=< f)
-instance Category (Projection s) where
-  (.) = o
-  id = Projection pure
-
-instance PFunctor (,) (Projection Word8) (Projection Word8) where
-  first :: forall a b c. Projection Word8 a b -> Projection Word8 (a, c) (b, c)
-  first (Projection f) = Projection $ \fac -> state $ \v -> go v fac
-    where
-      go :: Vector Word8 -> Format (a,c) Word8 -> (Format (b,c) Word8, Vector Word8)
-      go v = \case
-        Product fmt_a fmt_c ->
-          let (fmt_b, v') = runState (f fmt_a) v
-          in (Product fmt_b fmt_c, v')
-        Compose fmt_g fmt_f -> case fmt_f of
-          Id -> go v fmt_g
-          Product fmt_a fmt_c -> go v $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
-          Compose fmt_fg fmt_ff -> go v $ (fmt_g . fmt_fg) . fmt_ff
-
-newtype Pass s x y = Pass ((Vector s, Format x s) -> (Vector s, Format y s))
-{-
-second :: forall a b c. Projection Word8 a b -> Projection Word8 (c, a) (c, b)
-second (Projection f) = Projection $ \fca -> state $ \v -> go v fca
-  where
-    go :: Vector Word8 -> Format (c,a) Word8 -> (Format (c,b) Word8, Vector Word8)
-    go v = \case
-      Product a b ->
--}
-
-
-fst :: (Format (a, b) Word8, Vector Word8) -> (Format a Word8, Vector Word8)
-fst (Product a b, v) = (a, Vector.drop n v) --TODO: wrong
-  where n = fromIntegral $ length 8 8 b
-
+--------------------------------------------------------------------------------
+-- Ad-hoc parsing
+--------------------------------------------------------------------------------
 z :: Applicative parse => parse Word
 z = pure 0
 
 zz :: Monad parse => parse (Word :. Word :. Word)
 zz = both z $ \_ -> both z $ \_ -> z
 
---------------------------------------------------------------------------------
--- Ad-hoc parsing
---------------------------------------------------------------------------------
 ppair :: Monad parse => parse a -> (a -> parse b) -> parse b
 ppair fa fb = do
   a <- fa
@@ -385,16 +326,11 @@ toEncoderImpl tagBits bitsInB = go
         in EncoderImpl
           { _encoderImpl_encode = _encoderImpl_encode ia2b >=> _encoderImpl_encode ib2c
           , _encoderImpl_decode = \bs -> do
-              let
-                chunks :: Word -> Vector x -> parse (Vector (Vector x))
-                chunks n = fmap Vector.fromList . f
-                  where
-                    f v = case Vector.length v of
-                      0 -> pure mempty
-                      l | l < fromIntegral n -> throwError "Ran out of bytes while decoding chunk in Compose"
-                      _ -> let (a,b) = Vector.splitAt (fromIntegral n) v in (a :) <$> f b
-              cs <- chunks (length tagBits bitsInB b2c) bs
-              for cs (_encoderImpl_decode ib2c) >>= _encoderImpl_decode ia2b
+              pass <- Vector.replicateM (fromIntegral $ length tagBits bitsInB a2b) (_encoderImpl_decode ib2c bs)
+              counter <- get
+              x <- _encoderImpl_decode ia2b pass
+              put counter
+              pure x
           }
 
       Id -> EncoderImpl

@@ -10,6 +10,7 @@ module Backend where
 import Prelude hiding (length, id, snd, (.))
 
 import Control.Category
+import Control.Categorical.Bifunctor
 import Control.Concurrent
 import Control.Monad.Except
 import Control.Monad.State
@@ -23,6 +24,8 @@ import Common.Route
 import Common.Serialization
 import Obelisk.Backend
 import Obelisk.Route
+
+import Debug.Trace
 
 data Suit
   = Clubs
@@ -62,10 +65,11 @@ card :: Applicative check => EncoderK check Format Card Word8
 card = rank /\ suit
 
 wtf :: Applicative check => EncoderK check Format Card Word8
-wtf = id . card . id
+wtf = id . rank . id /\ id . suit . id --card
 
 ex1 :: Applicative check => EncoderK check Format Hand Word8
-ex1 = id . (card /\ card /\ card) . id
+--ex1 = id . ((card /\ card /\ card) . id)
+ex1 = (card /\ card /\ card)
 
 backend :: Backend BackendRoute FrontendRoute
 backend = Backend
@@ -84,15 +88,18 @@ backend = Backend
               (Ace, Spades) :. (Queen, Hearts) :. (Two, Clubs)
             d = flip evalStateT 0 $ tryDecode impl $ e
 
-            partial df = dig @(Either Text) df e fmt
+            partial df = do
+              putStrLn ""
+--              putStrLn $ explain $ fst $ flip runState e $ toHaskBytes df fmt
+              print $ dig @(Either Text) df e fmt
 
           putStrLn $ explain fmt
           print e
           print d
 
-          print $ partial $ Snd . Snd
-          print $ partial $ Snd . Fst
---          print $ partial $ First Snd
+          partial $ Snd . Snd
+          partial $ first id
+          partial $ first Snd
 
   , _backend_routeEncoder = fullRouteEncoder
   }
@@ -102,4 +109,4 @@ dig d v f = do
   let
     (f', v') = flip runState v $ toHaskBytes d f
     impl = toEncoderBytes f'
-  flip evalStateT 0 $ tryDecode impl v'
+  flip evalStateT 0 $ tryDecode impl $ trace (show v') v'
