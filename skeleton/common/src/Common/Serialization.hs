@@ -209,10 +209,32 @@ instance Bifunctor (,) (Deformatting s) (Deformatting s) (Deformatting s) where
 
 -- more like reverse-Writer: Eraser?
 toHaskBytes :: Deformatting Word8 x y -> Format x Word8 -> State (Vector Word8) (Format y Word8)
-toHaskBytes d = state . go' d
-  where
-    go' :: forall a b. Deformatting Word8 a b -> Format a Word8 -> (Vector Word8 -> (Format b Word8, Vector Word8))
-    go' = \case
+toHaskBytes = \case
+      IdD -> pure
+      ComposeD dg df -> toHaskBytes dg <=< toHaskBytes df
+      Snd -> state . flip go
+        where
+          go :: Vector Word8 -> Format (x,y) Word8 -> (Format y Word8, Vector Word8)
+          go v = \case
+            Product a b -> (b, Vector.drop n v)
+              where n = fromIntegral $ length 8 8 a
+            Compose g f -> case f of
+              Id -> go v g
+              Product a b -> go v $ Product (g `Compose` a) (g `Compose` b)
+              Compose fb fa -> go v $ (g `Compose` fb) `Compose` fa
+      First df -> go
+        where
+     --      go :: forall a b c. Vector Word8 -> Format (a,c) Word8 -> (Format (b,c) Word8, Vector Word8)
+          go = \case
+            Product fmt_a fmt_c -> do
+              fmt_b <- toHaskBytes df fmt_a
+              pure $ Product fmt_b fmt_c
+            Compose fmt_g fmt_f -> case fmt_f of
+              Id -> go fmt_g
+              Product fmt_a fmt_c -> go $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
+              Compose fmt_fg fmt_ff -> go $ (fmt_g . fmt_fg) . fmt_ff
+
+{-
       IdD -> (,)
       ComposeD dg df -> runState . (state . go' dg <=< state . go' df)
       Snd -> flip go
@@ -237,7 +259,7 @@ toHaskBytes d = state . go' d
               Id -> go v fmt_g
               Product fmt_a fmt_c -> go v $ Product (fmt_g . fmt_a) (fmt_g . fmt_c)
               Compose fmt_fg fmt_ff -> go v $ (fmt_g . fmt_fg) . fmt_ff
-
+-}
 snd = toHaskBytes Snd
 
 newtype Projection s x y = Projection (Format x s -> State (Vector s) (Format y s))
