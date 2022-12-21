@@ -84,35 +84,22 @@ backend = Backend
               (Ace, Spades) :. (Queen, Hearts) :. (Two, Clubs)
             d = flip evalStateT 0 $ tryDecode impl $ e
 
+            partial df = dig @(Either Text) df e fmt
+
           putStrLn $ explain fmt
           print e
           print d
 
-          print $ either Left Right $ lastCard e fmt
+          print $ partial $ Snd . Snd
+          print $ partial $ Snd . Fst
+--          print $ partial $ First Snd
 
   , _backend_routeEncoder = fullRouteEncoder
   }
 
-lastCard :: MonadError Text m => Vector Word8 -> Format Hand Word8 -> m Card
-lastCard v f =
+dig :: MonadError Text m => Deformatting Word8 a b -> Vector Word8 -> Format a Word8 -> m b
+dig d v f = do
   let
---    meh = snd f >>= snd
-    meh = toHaskBytes $ Snd . Snd
-
-    (f', v') = flip runState v $ meh f
+    (f', v') = flip runState v $ toHaskBytes d f
     impl = toEncoderBytes f'
-    d = flip evalStateT 0 $ tryDecode impl v'
-  in
-    d
---lastCard = flip $ \f -> evalState $ state $ \v  ->
-
---  snd' :: Format (a, b) (Vector Word8) -> State (Vector Word8) (Format b (Vector Word8))
-
-{-
-ex1 :: Format Card Word8
-ex1 = card (Ace, Spades)
-   /\ card (Queen, Hearts)
-   /\  (  card (Two, Diamonds) /\ card (Three, Diamonds)
-       \/ card (Two, Clubs)    /\ card (Three, Clubs)
-       )
--}
+  flip evalStateT 0 $ tryDecode impl v'

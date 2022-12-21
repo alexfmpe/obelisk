@@ -213,8 +213,8 @@ toHaskBytes d = state . go' d
   where
     go' :: forall a b. Deformatting Word8 a b -> Format a Word8 -> (Vector Word8 -> (Format b Word8, Vector Word8))
     go' = \case
-      ComposeD dg df -> \fmt -> runState $ state (go' df fmt) >>= state . go' dg
-      -- runState $ state . go' df =<< state (go' df) fmt
+      IdD -> (,)
+      ComposeD dg df -> runState . (state . go' dg <=< state . go' df)
       Snd -> flip go
         where
           go :: Vector Word8 -> Format (x,y) Word8 -> (Format y Word8, Vector Word8)
