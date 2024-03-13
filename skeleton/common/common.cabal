@@ -1,16 +1,9 @@
+cabal-version: 2.2
 name: common
 version: 0.1
-cabal-version: >= 1.2
 build-type: Simple
 
-library
-  hs-source-dirs: src
-  build-depends: base
-               , obelisk-route
-               , text
-  exposed-modules:
-    Common.Api
-    Common.Route
+common warnings
   ghc-options: -Wall -O -fno-show-valid-hole-fits
                -- unsafe code
                -Wincomplete-record-updates -Wincomplete-uni-patterns -Wpartial-fields
@@ -19,3 +12,13 @@ library
   if impl(ghc >= 8.8)
     ghc-options:
                -Wmissing-deriving-strategies
+
+library
+  import: warnings
+  hs-source-dirs: src
+  build-depends: base
+               , obelisk-route
+               , text
+  exposed-modules:
+    Common.Api
+    Common.Route
