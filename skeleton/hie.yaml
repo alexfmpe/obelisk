@@ -1,0 +1,9 @@
+# Partially broken - seems to work for backend/frontend but not common
+cradle:
+  cabal:
+    - path: "./common"
+      component: "lib:common"
+    - path: "./frontend"
+      component: "lib:frontend"
+    - path: "./backend"
+      component: "lib:backend"
